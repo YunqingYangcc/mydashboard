@@ -227,6 +227,28 @@ CREATE TABLE IF NOT EXISTS ai_outputs (
     json_metadata TEXT DEFAULT '{}',
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS knowledge_progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_key TEXT NOT NULL UNIQUE,
+    layer TEXT NOT NULL,
+    sublayer TEXT,
+    item_name TEXT NOT NULL,
+    is_learned INTEGER NOT NULL DEFAULT 0,
+    learned_at TEXT,
+    metadata_json TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_key TEXT NOT NULL,
+    document_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(item_key, document_id),
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
 """
 
 
@@ -1075,3 +1097,115 @@ def list_ai_outputs(limit: int = 20) -> list[dict[str, Any]]:
             (limit,),
         ).fetchall()
     return _decode_rows(rows, ["json_metadata"])
+
+
+def upsert_knowledge_item(item_key: str, layer: str, sublayer: str | None, item_name: str, is_learned: bool) -> None:
+    now = now_iso()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO knowledge_progress(
+                item_key, layer, sublayer, item_name, is_learned, learned_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(item_key) DO UPDATE SET
+                is_learned = excluded.is_learned,
+                learned_at = CASE WHEN excluded.is_learned = 1 THEN COALESCE(knowledge_progress.learned_at, excluded.learned_at) ELSE NULL END,
+                updated_at = excluded.updated_at
+            """,
+            (item_key, layer, sublayer, item_name, 1 if is_learned else 0, now if is_learned else None, now, now),
+        )
+
+
+def get_learned_items() -> set[str]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT item_key FROM knowledge_progress WHERE is_learned = 1"
+        ).fetchall()
+    return {row["item_key"] for row in rows}
+
+
+def reset_knowledge_progress() -> None:
+    with get_connection() as conn:
+        conn.execute("UPDATE knowledge_progress SET is_learned = 0, learned_at = NULL")
+
+
+def get_knowledge_stats() -> dict[str, int]:
+    with get_connection() as conn:
+        total = conn.execute("SELECT COUNT(*) as cnt FROM knowledge_progress").fetchone()["cnt"]
+        learned = conn.execute("SELECT COUNT(*) as cnt FROM knowledge_progress WHERE is_learned = 1").fetchone()["cnt"]
+    return {"total": total, "learned": learned}
+
+
+# ===== 知识点-文档关联管理 =====
+
+def link_document_to_knowledge(item_key: str, document_id: int) -> bool:
+    """将文档关联到知识点"""
+    from datetime import datetime
+    now = datetime.now().isoformat()
+    try:
+        with get_connection() as conn:
+            conn.execute("""
+                INSERT OR IGNORE INTO knowledge_documents (item_key, document_id, created_at)
+                VALUES (?, ?, ?)
+            """, (item_key, document_id, now))
+            return True
+    except Exception:
+        return False
+
+
+def unlink_document_from_knowledge(item_key: str, document_id: int) -> bool:
+    """取消文档与知识点的关联"""
+    try:
+        with get_connection() as conn:
+            conn.execute("""
+                DELETE FROM knowledge_documents
+                WHERE item_key = ? AND document_id = ?
+            """, (item_key, document_id))
+            return True
+    except Exception:
+        return False
+
+
+def get_documents_by_knowledge(item_key: str) -> list[dict]:
+    """获取与知识点关联的所有文档"""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT d.* FROM documents d
+            INNER JOIN knowledge_documents kd ON d.id = kd.document_id
+            WHERE kd.item_key = ?
+            ORDER BY kd.created_at DESC
+        """, (item_key,)).fetchall()
+        return [_row_factory(conn.cursor, row) for row in rows]
+
+
+def get_knowledge_by_document(document_id: int) -> list[str]:
+    """获取文档关联的所有知识点item_key"""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT item_key FROM knowledge_documents
+            WHERE document_id = ?
+        """, (document_id,)).fetchall()
+        return [row["item_key"] for row in rows]
+
+
+def get_all_knowledge_doc_links() -> dict[str, list[dict]]:
+    """获取所有知识点及其关联文档，用于布局页面"""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT kd.item_key, d.id, d.title, d.source_name
+            FROM knowledge_documents kd
+            INNER JOIN documents d ON d.id = kd.document_id
+            ORDER BY kd.item_key, kd.created_at DESC
+        """).fetchall()
+        
+        result = {}
+        for row in rows:
+            key = row["item_key"]
+            if key not in result:
+                result[key] = []
+            result[key].append({
+                "id": row["id"],
+                "title": row["title"],
+                "source_name": row["source_name"]
+            })
+        return result

@@ -69,22 +69,56 @@ def init_page_style(watermark_text: str = WATERMARK_TEXT) -> None:
             position: fixed;
             right: 18px;
             bottom: 10px;
-            font-size: 12px;
-            color: rgba(148, 163, 184, 0.18);
-            letter-spacing: 0.18em;
+            font-size: 11px;
+            color: rgba(148, 163, 184, 0.15);
+            letter-spacing: 0.2em;
             z-index: 9999;
             pointer-events: none;
             user-select: none;
+        }
+        .yyq-signature {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(139, 92, 246, 0.08));
+            border: 1px solid rgba(139, 92, 246, 0.15);
+            border-radius: 12px;
+            padding: 14px 16px;
+            margin-top: 24px;
+            text-align: center;
+        }
+        .yyq-signature-name {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #a5b4fc;
+            letter-spacing: 0.15em;
+            margin-bottom: 4px;
+        }
+        .yyq-signature-desc {
+            font-size: 0.72rem;
+            color: rgba(165, 180, 252, 0.5);
+            letter-spacing: 0.08em;
+        }
+        .yyq-divider {
+            border: none;
+            border-top: 1px solid rgba(139, 92, 246, 0.12);
+            margin: 16px 0;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
-    if watermark_text:
-        st.markdown(
-            f'<div class="yyq-watermark">{watermark_text}</div>',
-            unsafe_allow_html=True,
-        )
+
+
+def render_signature() -> None:
+    """渲染侧边栏签名卡片"""
+    st.markdown("---", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="yyq-signature">
+            <div class="yyq-signature-name">杨云清</div>
+            <div class="yyq-signature-desc">认知升级 · 投资精进</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def section_title(title: str, caption: str | None = None) -> None:

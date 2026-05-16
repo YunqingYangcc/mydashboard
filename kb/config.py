@@ -22,12 +22,28 @@ SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "personal-cognitive-os research@exa
 
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL")
+SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
-ZHIPU_BASE_URL = os.getenv("ZHIPU_BASE_URL")
+ZHIPU_BASE_URL = os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
 ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY")
+
 XIAOMI_BASE_URL = os.getenv("XIAOMI_BASE_URL")
 XIAOMI_API_KEY = os.getenv("XIAOMI_API_KEY")
+
+# ===== Gold AI 配置 =====
+GOLD_AI_API_KEY = os.getenv("GOLD_AI_API_KEY", "")
+GOLD_AI_BASE_URL = os.getenv("GOLD_AI_BASE_URL", "https://api.siliconflow.cn/v1")
+GOLD_AI_MODEL = os.getenv("GOLD_AI_MODEL", "deepseek-ai/DeepSeek-V4-Flash")
+
+# ===== 智谱 Gold AI 配置 =====
+ZHIPU_GOLD_AI_API_KEY = os.getenv("ZHIPU_GOLD_AI_API_KEY", "")
+ZHIPU_GOLD_AI_BASE_URL = os.getenv("ZHIPU_GOLD_AI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+ZHIPU_GOLD_AI_MODEL = os.getenv("ZHIPU_GOLD_AI_MODEL", "glm-4-plus")
+
+# ===== 小米 MiMo Gold AI 配置 =====
+XIAOMI_GOLD_AI_API_KEY = os.getenv("XIAOMI_GOLD_AI_API_KEY", "")
+XIAOMI_GOLD_AI_BASE_URL = os.getenv("XIAOMI_GOLD_AI_BASE_URL", "https://api.xiaomimimo.com/v1")
+XIAOMI_GOLD_AI_MODEL = os.getenv("XIAOMI_GOLD_AI_MODEL", "mimo-v2.5-pro")
 
 MODEL_RESEARCHER_A = os.getenv("MODEL_RESEARCHER_A", "glm-4-flash")
 MODEL_RESEARCHER_B = os.getenv("MODEL_RESEARCHER_B", "mimo-7b-chat")

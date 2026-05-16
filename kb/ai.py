@@ -1,214 +1,207 @@
-import json
-import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 from openai import OpenAI
 
 from kb.config import (
     MODEL_DIRECTOR,
-    MODEL_RESEARCHER_A,
-    MODEL_RESEARCHER_B,
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     SILICONFLOW_API_KEY,
     SILICONFLOW_BASE_URL,
-    XIAOMI_API_KEY,
-    XIAOMI_BASE_URL,
-    ZHIPU_API_KEY,
-    ZHIPU_BASE_URL,
+    GOLD_AI_API_KEY,
+    GOLD_AI_BASE_URL,
+    GOLD_AI_MODEL,
+    ZHIPU_GOLD_AI_API_KEY,
+    ZHIPU_GOLD_AI_BASE_URL,
+    ZHIPU_GOLD_AI_MODEL,
+    XIAOMI_GOLD_AI_API_KEY,
+    XIAOMI_GOLD_AI_BASE_URL,
+    XIAOMI_GOLD_AI_MODEL,
 )
 from kb.storage import (
-    fetch_latest_documents,
     finish_run,
     insert_ai_output,
-    insert_claim,
     insert_run,
-    latest_signal_score,
-    list_claims,
+    get_connection,
 )
+from kb.utils import now_iso
 
+UPDATE_DOC_PROMPT = """
+你是资深的 AI 投研总监。请对以下名为《{title}》的知识库文章进行全面更新、润色和认知升维。
+你可以：
+1. 优化和重构原有的 Markdown 结构，使其更具逻辑性和可读性。
+2. 基于你的知识储备，补充更深度的产业链洞察、前沿数据或逻辑推演。
+3. 在文末增加一个「💡 AI 认知迭代补充」的总结段落，简述你做了哪些补充。
 
-RESEARCHER_PROMPT = """
-你是一名研究员。请基于以下认知操作系统上下文，输出严格 JSON：
-{{
-  "summary": "一句话结论",
-  "bullish_score": 0,
-  "key_factors": ["因素1", "因素2"],
-  "claims": [{{"subject": "AI 基础设施", "statement": "CoWoS 仍是约束变量", "stance": "support", "review_cycle": "quarterly"}}],
-  "tasks": ["下周跟踪点1", "下周跟踪点2"]
-}}
+请必须且只能输出更新后的完整 Markdown 全文，不要输出任何如“好的，以下是更新后的内容”等开场白或废话。
 
-上下文：
-{context}
+原文内容：
+{content}
 """.strip()
 
-DIRECTOR_PROMPT = """
-你是策略总监。请融合两位研究员观点，输出严格 JSON：
-{{
-  "summary": "最终综合判断",
-  "action": "加仓|减仓|观望",
-  "confidence": 0.0,
-  "bullish_score": 0,
-  "key_factors": ["共识要点1", "共识要点2"],
-  "final_claims": [{{"subject": "NVDA", "statement": "估值需要盈利兑现配合", "stance": "neutral", "review_cycle": "weekly"}}]
-}}
-
-研究员A：
-{researcher_a}
-
-研究员B：
-{researcher_b}
-""".strip()
-
-
-def _provider_config(role: str) -> dict:
-    mapping = {
-        "researcher_a": {
-            "provider": "zhipu",
-            "model": MODEL_RESEARCHER_A,
-            "base_url": ZHIPU_BASE_URL or OPENAI_BASE_URL,
-            "api_key": ZHIPU_API_KEY or OPENAI_API_KEY,
-        },
-        "researcher_b": {
-            "provider": "xiaomi",
-            "model": MODEL_RESEARCHER_B,
-            "base_url": XIAOMI_BASE_URL or OPENAI_BASE_URL,
-            "api_key": XIAOMI_API_KEY or OPENAI_API_KEY,
-        },
-        "director": {
-            "provider": "siliconflow",
-            "model": MODEL_DIRECTOR,
-            "base_url": SILICONFLOW_BASE_URL or OPENAI_BASE_URL,
-            "api_key": SILICONFLOW_API_KEY or OPENAI_API_KEY,
-        },
+def _provider_config(provider: str = "gold") -> dict:
+    """获取 AI 提供商配置
+    
+    Args:
+        provider: 提供商类型，可选 'gold', 'siliconflow', 'zhipu', 'xiaomi', 'openai'
+    
+    Returns:
+        包含 provider, model, base_url, api_key 的配置字典
+    """
+    import os
+    
+    # Gold AI (默认)
+    if provider == "gold" or not provider:
+        api_key = GOLD_AI_API_KEY or os.getenv("GOLD_AI_API_KEY", "")
+        if api_key:
+            return {
+                "provider": "gold",
+                "model": os.getenv("GOLD_AI_MODEL", GOLD_AI_MODEL),
+                "base_url": os.getenv("GOLD_AI_BASE_URL", GOLD_AI_BASE_URL),
+                "api_key": api_key,
+            }
+    
+    # SiliconFlow
+    if provider == "siliconflow":
+        api_key = SILICONFLOW_API_KEY or os.getenv("SILICONFLOW_API_KEY", "")
+        if api_key:
+            return {
+                "provider": "siliconflow",
+                "model": os.getenv("MODEL_DIRECTOR", MODEL_DIRECTOR),
+                "base_url": SILICONFLOW_BASE_URL or OPENAI_BASE_URL or "",
+                "api_key": api_key,
+            }
+    
+    # 智谱 Gold AI
+    if provider == "zhipu":
+        api_key = ZHIPU_GOLD_AI_API_KEY or os.getenv("ZHIPU_GOLD_AI_API_KEY", "")
+        if api_key:
+            return {
+                "provider": "zhipu",
+                "model": os.getenv("ZHIPU_GOLD_AI_MODEL", ZHIPU_GOLD_AI_MODEL),
+                "base_url": os.getenv("ZHIPU_GOLD_AI_BASE_URL", ZHIPU_GOLD_AI_BASE_URL),
+                "api_key": api_key,
+            }
+    
+    # 小米 MiMo
+    if provider == "xiaomi":
+        api_key = XIAOMI_GOLD_AI_API_KEY or os.getenv("XIAOMI_GOLD_AI_API_KEY", "")
+        if api_key:
+            return {
+                "provider": "xiaomi",
+                "model": os.getenv("XIAOMI_GOLD_AI_MODEL", XIAOMI_GOLD_AI_MODEL),
+                "base_url": os.getenv("XIAOMI_GOLD_AI_BASE_URL", XIAOMI_GOLD_AI_BASE_URL),
+                "api_key": api_key,
+            }
+    
+    # OpenAI (备选)
+    if provider == "openai":
+        api_key = OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", "")
+        if api_key:
+            return {
+                "provider": "openai",
+                "model": os.getenv("MODEL_DIRECTOR", MODEL_DIRECTOR),
+                "base_url": OPENAI_BASE_URL or "https://api.openai.com/v1",
+                "api_key": api_key,
+            }
+    
+    # 回退到 siliconflow
+    api_key = SILICONFLOW_API_KEY or os.getenv("SILICONFLOW_API_KEY", "") or OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", "")
+    return {
+        "provider": "siliconflow",
+        "model": os.getenv("MODEL_DIRECTOR", MODEL_DIRECTOR),
+        "base_url": (SILICONFLOW_BASE_URL or OPENAI_BASE_URL) or "https://api.siliconflow.cn/v1",
+        "api_key": api_key,
     }
-    return mapping[role]
 
+def _ask_text(prompt: str, provider: str = "gold"):
+    cfg = _provider_config(provider)
+    if not cfg.get("api_key"):
+        return "", {"used_fallback": True, "reason": "missing_api_key"}, cfg
 
-def _extract_json(text: str) -> dict:
-    matched = re.search(r"\{[\s\S]*\}", text)
-    if not matched:
-        return {}
     try:
-        return json.loads(matched.group(0))
-    except json.JSONDecodeError:
-        return {}
-
-
-def _ask(role: str, prompt: str):
-    cfg = _provider_config(role)
-    if not cfg["api_key"]:
-        mock = {
-            "summary": f"{role} mock 结论：保持跟踪。",
-            "bullish_score": 55,
-            "key_factors": ["缺少 API Key，当前为 mock", "请配置真实模型接口"],
-            "claims": [
+        client = OpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"])
+        response = client.chat.completions.create(
+            model=cfg["model"],
+            temperature=0.3,
+            messages=[
                 {
-                    "subject": "system",
-                    "statement": f"{role} 运行于 mock 模式",
-                    "stance": "neutral",
-                    "review_cycle": "weekly",
-                }
+                    "role": "system",
+                    "content": "你是资深的投资与研究助手。请直接输出 Markdown 文本，不要有任何多余的寒暄。",
+                },
+                {"role": "user", "content": prompt},
             ],
-            "tasks": ["配置模型密钥", "补充真实文档与指标"],
-        }
-        return json.dumps(mock, ensure_ascii=False), mock, cfg
+        )
+        content = response.choices[0].message.content or ""
+    except Exception as exc:  # noqa: BLE001
+        return "", {"used_fallback": True, "reason": str(exc)}, cfg
 
-    client = OpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"])
-    response = client.chat.completions.create(
-        model=cfg["model"],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": "你是严谨研究助手，只输出 JSON。"},
-            {"role": "user", "content": prompt},
-        ],
+    # 清理可能带有的 markdown code block 标记
+    if content.startswith("```markdown"):
+        content = content[11:]
+    elif content.startswith("```md"):
+        content = content[5:]
+    if content.startswith("```"):
+        content = content[3:]
+    if content.endswith("```"):
+        content = content[:-3]
+
+    return content.strip(), {"used_fallback": False}, cfg
+
+
+def _build_fallback_content(title: str, content: str, reason: str) -> str:
+    fallback_note = (
+        "## AI 更新状态\n"
+        f"- 文章：{title}\n"
+        f"- 本次未调用到真实模型。\n"
+        f"- 原因：{reason}\n"
+        "- 系统已保留原文，未自动覆写数据库。\n"
     )
-    content = response.choices[0].message.content or "{}"
-    return content, _extract_json(content), cfg
+    if "## AI 更新状态" in content:
+        return content
+    return f"{content.rstrip()}\n\n{fallback_note}\n"
 
-
-def _context_text() -> str:
-    lines = ["最新信号评分：", json.dumps(latest_signal_score() or {}, ensure_ascii=False)]
-    lines.append("最新文档：")
-    for document in fetch_latest_documents(limit=5):
-        lines.append(f"- {document['title']}: {document.get('summary') or ''}")
-    lines.append("已有断言：")
-    for claim in list_claims(limit=5):
-        lines.append(f"- {claim['subject']}: {claim['statement']}")
-    return "\n".join(lines)
-
-
-def run_multi_role_workflow() -> dict:
-    run_id = f"ai_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
-    insert_run(run_id, "ai_workflow", "running")
+def run_document_update_workflow(doc_id: str, title: str, content: str, provider: str = "gold") -> dict:
+    run_id = f"ai_doc_update_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    insert_run(run_id, "ai_doc_update", "running")
 
     try:
-        context = _context_text()
-
-        prompt_a = RESEARCHER_PROMPT.format(context=context)
-        response_a, meta_a, cfg_a = _ask("researcher_a", prompt_a)
-        insert_ai_output(
-            {
-                "run_id": run_id,
-                "role": "researcher_a",
-                "provider": cfg_a["provider"],
-                "model": cfg_a["model"],
-                "prompt_text": prompt_a,
-                "response_text": response_a,
-                "json_metadata": meta_a,
-            }
+        prompt = UPDATE_DOC_PROMPT.format(title=title, content=content)
+        new_content, meta, cfg = _ask_text(prompt, provider)
+        used_fallback = bool(meta.get("used_fallback"))
+        result_content = (
+            _build_fallback_content(title, content, str(meta.get("reason", "未知错误")))
+            if used_fallback
+            else new_content
         )
 
-        prompt_b = RESEARCHER_PROMPT.format(context=context)
-        response_b, meta_b, cfg_b = _ask("researcher_b", prompt_b)
-        insert_ai_output(
-            {
-                "run_id": run_id,
-                "role": "researcher_b",
-                "provider": cfg_b["provider"],
-                "model": cfg_b["model"],
-                "prompt_text": prompt_b,
-                "response_text": response_b,
-                "json_metadata": meta_b,
-            }
-        )
-
-        prompt_director = DIRECTOR_PROMPT.format(
-            researcher_a=response_a, researcher_b=response_b
-        )
-        response_director, meta_director, cfg_director = _ask("director", prompt_director)
         insert_ai_output(
             {
                 "run_id": run_id,
                 "role": "director",
-                "provider": cfg_director["provider"],
-                "model": cfg_director["model"],
-                "prompt_text": prompt_director,
-                "response_text": response_director,
-                "json_metadata": meta_director,
+                "provider": cfg["provider"],
+                "model": cfg["model"],
+                "prompt_text": prompt,
+                "response_text": result_content,
+                "json_metadata": meta,
             }
         )
 
-        for claim in meta_director.get("final_claims", []):
-            insert_claim(
-                {
-                    "claim_type": "director_consensus",
-                    "subject": claim.get("subject", "unknown"),
-                    "statement": claim.get("statement", ""),
-                    "stance": claim.get("stance", "neutral"),
-                    "review_cycle": claim.get("review_cycle", "weekly"),
-                    "metadata": {"run_id": run_id},
-                }
-            )
+        # 只有真实模型返回成功时才覆写原文，避免认证失败污染知识库。
+        if not used_fallback:
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE documents SET content = ?, updated_at = ? WHERE id = ?",
+                    (result_content, now_iso(), doc_id),
+                )
 
-        finish_run(run_id, "completed", {"roles": 3})
+        finish_run(run_id, "completed", {"doc_id": doc_id})
         return {
             "run_id": run_id,
-            "researcher_a": meta_a,
-            "researcher_b": meta_b,
-            "director": meta_director,
+            "new_content": result_content,
+            "used_fallback": used_fallback,
+            "message": meta.get("reason", ""),
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         finish_run(run_id, "failed", {"error": str(exc)})
         raise

@@ -9,7 +9,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from dashboard.components import init_page_style, section_title, render_document_preview
+from dashboard.components import init_page_style, render_document_preview, render_signature, section_title
 from kb.storage import init_db, upsert_document, fetch_latest_documents
 from kb.utils import now_iso
 
@@ -92,8 +92,18 @@ with tab1:
         
         submitted = st.form_submit_button("保存试题")
         if submitted:
-            if not title.strip() or not content.strip():
-                st.error("标题和内容不能为空！")
+            # 解析内容
+            questions = parse_quiz_content(content)
+            
+            # 校验
+            if not title.strip():
+                st.error("❌ 试卷标题不能为空！")
+            elif not content.strip() or content.strip() == QUIZ_TEMPLATE.strip():
+                st.error("❌ 试卷内容不能为空！")
+            elif not questions:
+                st.error("❌ 未检测到有效试题，请确保包含「## 题目：」开头的试题！")
+            elif any("在这里" in q["title"] for q in questions):
+                st.error("❌ 检测到模板占位符，请填写真实题目！")
             else:
                 tags = [t.strip() for t in tags_input.split(",") if t.strip()]
                 if "quiz" not in tags:
@@ -104,13 +114,13 @@ with tab1:
                     "source_name": "manual_entry",
                     "title": title.strip(),
                     "content": content.strip(),
-                    "summary": content.strip()[:200] + "...",
+                    "summary": f"共 {len(questions)} 道试题 | {title.strip()}",
                     "tags": tags,
-                    "metadata": {"render_mode": "markdown", "type": "quiz"},
+                    "metadata": {"render_mode": "markdown", "type": "quiz", "question_count": len(questions)},
                     "doc_date": now_iso()
                 }
                 upsert_document(payload)
-                st.success("试题保存成功！可以在「历史试题回顾」中查看。")
+                st.success(f"✅ 试题保存成功！共 {len(questions)} 道题目")
                 st.rerun()
 
 with tab2:
@@ -203,3 +213,7 @@ with tab2:
                     if q["feedback"]:
                         st.markdown("**🤖 AI 点评：**")
                         st.info(q["feedback"].replace('$', r'\$'))
+
+# 侧边栏签名
+with st.sidebar:
+    render_signature()
