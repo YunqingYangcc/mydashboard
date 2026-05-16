@@ -1,0 +1,43 @@
+import os
+from pathlib import Path
+
+import pytz
+from dotenv import load_dotenv
+
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT_DIR / ".env")
+
+TIMEZONE = os.getenv("TIMEZONE", "Asia/Shanghai")
+DATABASE_PATH = ROOT_DIR / os.getenv("DATABASE_PATH", "data/cognitive_os.db")
+LOG_DIR = ROOT_DIR / os.getenv("LOG_DIR", "logs")
+INBOX_DIR = ROOT_DIR / os.getenv("INBOX_DIR", "data/inbox")
+EXPORT_DIR = ROOT_DIR / os.getenv("EXPORT_DIR", "data/exports")
+RSS_URLS = [item.strip() for item in os.getenv("RSS_URLS", "").split(",") if item.strip()]
+
+FRED_API_KEY = os.getenv("FRED_API_KEY")
+ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
+FMP_API_KEY = os.getenv("FMP_API_KEY")
+SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "personal-cognitive-os research@example.com")
+
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL")
+SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
+ZHIPU_BASE_URL = os.getenv("ZHIPU_BASE_URL")
+ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY")
+XIAOMI_BASE_URL = os.getenv("XIAOMI_BASE_URL")
+XIAOMI_API_KEY = os.getenv("XIAOMI_API_KEY")
+
+MODEL_RESEARCHER_A = os.getenv("MODEL_RESEARCHER_A", "glm-4-flash")
+MODEL_RESEARCHER_B = os.getenv("MODEL_RESEARCHER_B", "mimo-7b-chat")
+MODEL_DIRECTOR = os.getenv("MODEL_DIRECTOR", "deepseek-v3")
+
+
+def ensure_directories() -> None:
+    for path in [DATABASE_PATH.parent, LOG_DIR, INBOX_DIR, EXPORT_DIR]:
+        Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def timezone():
+    return pytz.timezone(TIMEZONE)
