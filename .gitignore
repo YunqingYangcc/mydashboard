@@ -3,7 +3,6 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-.streamlit/
 logs/
 data/cognitive_os.db
 data/exports/
