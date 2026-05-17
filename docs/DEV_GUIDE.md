@@ -298,3 +298,105 @@ ngrok http 8501
 - 不用 `print`
 - 尽量保证单机可跑
 - 优先可维护性，不追求一开始过度抽象
+
+## 13. 关键服务与资源地址
+
+### 13.1 GitHub 仓库
+
+| 项目 | 地址 |
+|------|------|
+| 仓库地址 | https://github.com/YunqingYangcc/mydashboard |
+| 分支 | main |
+| 入口文件 | dashboard/main.py |
+
+**部署触发**：每次 `git push` 到 main 分支，Streamlit Cloud 会自动重新部署。
+
+### 13.2 Streamlit Cloud 在线应用
+
+| 项目 | 地址 |
+|------|------|
+| 在线地址 | https://yyq-mydashboard.streamlit.app/ |
+| 状态 | 需登录 Streamlit Cloud 查看 |
+| Settings | https://share.streamlit.io/ |
+
+**重要**：Streamlit Cloud 免费版使用 **Supabase PostgreSQL** 存储数据，每次 `git push` 不影响数据持久性。
+
+### 13.3 Supabase 云数据库
+
+| 项目 | 值 |
+|------|---|
+| 项目 URL | https://kvmvaodlznttvtfsjqpl.supabase.co |
+| PostgreSQL Host | db.kvmvaodlznttvtfsjqpl.supabase.co |
+| PostgreSQL Port | 5432 |
+| Database | postgres |
+| 用户名 | postgres |
+| Dashboard | https://supabase.com/dashboard |
+
+**登录方式**：使用 GitHub 账号登录 Supabase
+
+**数据库连接字符串**（已配置在 Streamlit Cloud Secrets）：
+```toml
+DATABASE_URL="postgresql://postgres:Yyq@2147483648@db.kvmvaodlznttvtfsjqpl.supabase.co:5432/postgres"
+```
+
+### 13.4 数据库表结构
+
+当前在线数据库表（与 SQLite 结构兼容）：
+
+| 表名 | 用途 |
+|------|------|
+| `runs` | 运行记录 |
+| `documents` | 摄入文档 |
+| `tasks` | 任务清单 |
+| `entities` | 实体（人/事/概念） |
+| `relations` | 关系 |
+| `claims` | 断言/判断 |
+| `ai_outputs` | AI 输出日志 |
+
+**查看数据**：
+1. 登录 Supabase Dashboard
+2. 进入项目 → **Table Editor**
+3. 选择表查看数据
+
+**备份数据**：
+1. Supabase Dashboard → **SQL Editor**
+2. 执行查询导出，或使用 **Database** → **Export** 功能
+
+### 13.5 本地开发配置
+
+| 文件 | 说明 |
+|------|------|
+| `.env` | 本地环境变量（API Keys 等）|
+| `.streamlit/config.toml` | Streamlit 配置 |
+| `data/cognitive_os.db` | 本地 SQLite 数据库（开发用）|
+
+**本地开发启动**：
+```bash
+streamlit run dashboard/main.py
+```
+
+**Supabase 连接优先级**：
+- Streamlit Cloud 环境：使用 `DATABASE_URL` 环境变量（Supabase）
+- 本地环境：使用 `data/cognitive_os.db`（SQLite）
+
+### 13.6 更新部署流程
+
+```
+本地修改代码
+    ↓
+git add .
+    ↓
+git commit -m "描述"
+    ↓
+git push
+    ↓
+Streamlit Cloud 自动检测 → 自动部署（约2-5分钟）
+    ↓
+Supabase 数据不受影响（云数据库）
+```
+
+### 13.7 注意事项
+
+1. **密码更新**：如果 Supabase 密码变更，需要同步更新 Streamlit Cloud Secrets 中的 `DATABASE_URL`
+2. **SQLite vs PostgreSQL**：本地开发用 SQLite，生产环境（Streamlit Cloud）用 PostgreSQL
+3. **免费额度**：Supabase 免费版 500MB，够个人使用

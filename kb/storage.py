@@ -501,7 +501,18 @@ if not USE_POSTGRES:
 def get_connection():
     """统一连接接口"""
     if USE_POSTGRES:
-        conn = psycopg2.connect(os.environ["DATABASE_URL"])
+        from urllib.parse import urlparse
+        db_url = os.environ["DATABASE_URL"]
+        parsed = urlparse(db_url)
+        # 手动构建参数，避免密码中的特殊字符（如 @）导致解析错误
+        conn = psycopg2.connect(
+            host=parsed.hostname,
+            port=parsed.port or 5432,
+            dbname=parsed.path.lstrip('/') or 'postgres',
+            user=parsed.username,
+            password=parsed.password,
+            sslmode='require'
+        )
         conn.autocommit = False
         try:
             yield conn
