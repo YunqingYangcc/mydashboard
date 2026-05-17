@@ -12,8 +12,8 @@ from kb.document_utils import build_document_key
 from kb.utils import json_dumps, now_iso
 
 
-# 检测使用哪种数据库
-USE_POSTGRES = bool(os.environ.get("DATABASE_URL"))
+# 检测使用哪种数据库（强制使用 SQLite，避免 Supabase 连接问题）
+USE_POSTGRES = False
 
 # PostgreSQL Schema（无 FTS5）
 PG_SCHEMA_SQL = """
