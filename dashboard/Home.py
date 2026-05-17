@@ -18,7 +18,7 @@ from kb.storage import (
 init_db()
 init_page_style()
 
-st.title("🚀 认知炼金术士")
+st.title("🚀 认知管理助手")
 
 # 励志标语
 SLOGANS = [
@@ -63,15 +63,23 @@ with entry_col1:
 with entry_col2:
     st.page_link("pages/知识库.py", label="📝 知识库", icon="📝")
 with entry_col3:
-    st.page_link("pages/认知验证.py", label="🧠 认知验证", icon="🧠")
+    st.page_link("pages/学习笔记.py", label="🧠 学习笔记", icon="🧠")
 with entry_col4:
-    st.page_link("pages/认知闭环自检.py", label="🔄 认知闭环自检", icon="🔄")
+    st.page_link("pages/试题.py", label="📝 试题练习", icon="📝")
 
 entry_col5, entry_col6 = st.columns(2)
 with entry_col5:
-    st.page_link("pages/复盘编辑器.py", label="📝 复盘编辑器", icon="📝")
+    st.page_link("pages/复盘编辑器.py", label="🔄 复盘", icon="🔄")
 with entry_col6:
     st.page_link("pages/文档导入管理.py", label="📥 文档导入", icon="📥")
+
+st.divider()
+st.subheader("📍 进度跟踪")
+progress_col1, progress_col2 = st.columns(2)
+with progress_col1:
+    st.page_link("pages/进度跟踪.py", label="📍 进度跟踪", icon="📍")
+with progress_col2:
+    st.caption("记录学习/工作进度")
 
 # 签名
 with st.sidebar:

@@ -256,8 +256,23 @@ def _init_knowledge_db() -> None:
         PRIMARY KEY (item_key, document_id)
     );
 
+    CREATE TABLE IF NOT EXISTS quizzes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_key TEXT NOT NULL,
+        question_type TEXT NOT NULL,
+        question_text TEXT NOT NULL,
+        options_json TEXT,
+        correct_answer TEXT,
+        explanation TEXT,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (document_key) REFERENCES documents(document_key)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(hash);
     CREATE INDEX IF NOT EXISTS idx_documents_document_key ON documents(document_key);
+    CREATE INDEX IF NOT EXISTS idx_quizzes_document_key ON quizzes(document_key);
     """
     with get_knowledge_db() as conn:
         conn.executescript(schema)
@@ -269,6 +284,7 @@ def _init_claims_db() -> None:
     CREATE TABLE IF NOT EXISTS claims (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         claim_type TEXT,
+        chapter TEXT,
         subject TEXT,
         statement TEXT NOT NULL,
         verification_status TEXT DEFAULT 'pending',
@@ -286,6 +302,11 @@ def _init_claims_db() -> None:
     """
     with get_claims_db() as conn:
         conn.executescript(schema)
+        # 迁移：添加 chapter 列（如果不存在）
+        try:
+            conn.execute("ALTER TABLE claims ADD COLUMN chapter TEXT")
+        except Exception:
+            pass  # 列已存在
 
 
 def _init_review_db() -> None:
@@ -335,6 +356,13 @@ def _init_review_db() -> None:
         metadata_json TEXT DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS progress_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content TEXT NOT NULL,
+        log_time TEXT NOT NULL,
+        created_at TEXT NOT NULL
     );
     """
     with get_review_db() as conn:
@@ -426,19 +454,41 @@ def get_document_by_hash(document_hash: str) -> dict | None:
     return _decode_rows([row] if row else [], ["tags_json", "metadata_json"])[0] if row else None
 
 
+
+def get_document_by_key(document_key: str) -> dict | None:
+    """通过 document_key 获取文档"""
+    with get_knowledge_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM documents WHERE document_key = ?", (document_key,)
+        ).fetchone()
+    return _decode_rows([row] if row else [], ["tags_json", "metadata_json"])[0] if row else None
+
+
 # ===== 断言操作（认知闭环.db）=====
 
-def list_claims(claim_type: str = None, limit: int = 100) -> list:
+def list_claims(claim_type: str = None, chapter: str = None, limit: int = 100) -> list:
     with get_claims_db() as conn:
-        if claim_type:
-            rows = conn.execute(
-                "SELECT * FROM claims WHERE claim_type = ? ORDER BY created_at DESC LIMIT ?",
-                (claim_type, limit)
-            ).fetchall()
+        if chapter:
+            if claim_type:
+                rows = conn.execute(
+                    "SELECT * FROM claims WHERE claim_type = ? AND chapter = ? ORDER BY created_at DESC LIMIT ?",
+                    (claim_type, chapter, limit)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM claims WHERE chapter = ? ORDER BY created_at DESC LIMIT ?",
+                    (chapter, limit)
+                ).fetchall()
         else:
-            rows = conn.execute(
-                "SELECT * FROM claims ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            if claim_type:
+                rows = conn.execute(
+                    "SELECT * FROM claims WHERE claim_type = ? ORDER BY created_at DESC LIMIT ?",
+                    (claim_type, limit)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM claims ORDER BY created_at DESC LIMIT ?", (limit,)
+                ).fetchall()
     return _decode_rows(rows, ["metadata_json"])
 
 
@@ -447,11 +497,12 @@ def insert_claim(payload: dict) -> None:
     with get_claims_db() as conn:
         conn.execute("""
             INSERT INTO claims(
-                claim_type, subject, statement, verification_status, source,
+                claim_type, chapter, subject, statement, verification_status, source,
                 source_document_id, notes, review_cycle, topic, metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             payload.get("claim_type"),
+            payload.get("chapter"),
             payload.get("subject"),
             payload.get("statement"),
             payload.get("verification_status", "pending"),
@@ -463,6 +514,44 @@ def insert_claim(payload: dict) -> None:
             json_dumps(payload.get("metadata", {})),
             now,
             now
+        ))
+
+
+def delete_claim(claim_id: int) -> None:
+    """删除指定断言"""
+    with get_claims_db() as conn:
+        conn.execute("DELETE FROM claims WHERE id = ?", (claim_id,))
+
+
+def update_claim(claim_id: int, payload: dict) -> None:
+    """更新断言的所有字段"""
+    now = now_iso()
+    with get_claims_db() as conn:
+        conn.execute("""
+            UPDATE claims SET
+                claim_type = ?,
+                chapter = ?,
+                subject = ?,
+                statement = ?,
+                verification_status = ?,
+                source = ?,
+                notes = ?,
+                validation_note = ?,
+                topic = ?,
+                updated_at = ?
+            WHERE id = ?
+        """, (
+            payload.get("claim_type"),
+            payload.get("chapter"),
+            payload.get("subject"),
+            payload.get("statement"),
+            payload.get("verification_status", "pending"),
+            payload.get("source"),
+            payload.get("notes"),
+            payload.get("validation_note"),
+            payload.get("topic"),
+            now,
+            claim_id
         ))
 
 
@@ -559,6 +648,23 @@ def update_task_status(task_id: int, status: str) -> None:
 def list_entities() -> list:
     with get_knowledge_db() as conn:
         return conn.execute("SELECT * FROM entities ORDER BY name ASC").fetchall()
+
+
+def ensure_entity(name: str, entity_type: str) -> int:
+    """确保实体存在，返回实体 ID（已存在则返回现有 ID）"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM entities WHERE name = ? AND entity_type = ?",
+            (name, entity_type)
+        ).fetchone()
+        if existing:
+            return existing["id"]
+        cursor = conn.execute(
+            "INSERT INTO entities(name, entity_type, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (name, entity_type, now, now)
+        )
+        return cursor.lastrowid
 
 
 def insert_relation(payload: dict) -> None:
@@ -898,6 +1004,66 @@ def reset_knowledge_progress() -> None:
         conn.execute("UPDATE knowledge_progress SET is_learned = 0, learned_at = NULL")
 
 
+# ===== 题库系统（知识库.db）=====
+
+def insert_quiz_question(payload: dict) -> int:
+    """插入单个试题"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        cursor = conn.execute("""
+            INSERT INTO quizzes(document_key, question_type, question_text, options_json, correct_answer, explanation, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            payload.get("document_key"),
+            payload.get("question_type"),
+            payload.get("question_text"),
+            json_dumps(payload.get("options", [])),
+            payload.get("correct_answer"),
+            payload.get("explanation"),
+            payload.get("sort_order", 0),
+            now,
+            now
+        ))
+        return cursor.lastrowid
+
+
+def insert_quizzes(document_key: str, questions: list[dict]) -> int:
+    """批量插入试题"""
+    count = 0
+    for i, q in enumerate(questions):
+        q["document_key"] = document_key
+        q["sort_order"] = i
+        insert_quiz_question(q)
+        count += 1
+    return count
+
+
+def fetch_quizzes_by_document_key(document_key: str) -> list[dict]:
+    """根据文档key获取试题列表"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM quizzes 
+            WHERE document_key = ? 
+            ORDER BY sort_order ASC, id ASC
+        """, (document_key,)).fetchall()
+    return _decode_rows(rows, ["options_json"])
+
+
+def delete_quizzes_by_document_key(document_key: str) -> None:
+    """删除指定文档的所有试题"""
+    with get_knowledge_db() as conn:
+        conn.execute("DELETE FROM quizzes WHERE document_key = ?", (document_key,))
+
+
+def get_document_by_key(document_key: str) -> dict:
+    """根据document_key获取文档"""
+    with get_knowledge_db() as conn:
+        row = conn.execute("SELECT * FROM documents WHERE document_key = ?", (document_key,)).fetchone()
+    if row:
+        return dict(row)
+    return None
+
+
 def update_claim_validation(claim_id: int, validation_status: str, note: str = None) -> None:
     """更新断言验证状态"""
     now = now_iso()
@@ -916,12 +1082,23 @@ def update_claim_validation(claim_id: int, validation_status: str, note: str = N
 
 def list_extracted_claims_by_document_key(document_key: str, limit: int = 100) -> list:
     """根据文档key获取抽取的断言"""
+    # 先从 knowledge_db 获取 document id
+    with get_knowledge_db() as conn:
+        doc_row = conn.execute(
+            "SELECT id FROM documents WHERE document_key = ?", (document_key,)
+        ).fetchone()
+    
+    if not doc_row:
+        return []
+    
+    doc_id = doc_row["id"]
+    
+    # 再从 claims_db 查询
     with get_claims_db() as conn:
-        rows = conn.execute("""
-            SELECT * FROM claims WHERE source_document_id IN (
-                SELECT id FROM documents WHERE document_key = ?
-            ) LIMIT ?
-        """, (document_key, limit)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM claims WHERE source_document_id = ? LIMIT ?",
+            (doc_id, limit)
+        ).fetchall()
     return _decode_rows(rows, ["metadata_json"])
 
 
@@ -963,3 +1140,84 @@ def update_task_status(task_id: int, status: str) -> None:
     now = now_iso()
     with get_knowledge_db() as conn:
         conn.execute("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?", (status, now, task_id))
+
+
+def list_extracted_relations_by_document_key(document_key: str, limit: int = 100) -> list:
+    """根据文档key获取抽取的关系"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM relations WHERE source_document_id IN (
+                SELECT id FROM documents WHERE document_key = ?
+            ) LIMIT ?
+        """, (document_key, limit)).fetchall()
+    return _decode_rows(rows, ["metadata_json"])
+
+
+def update_document_metadata(doc_id: int, metadata: dict) -> None:
+    """更新文档元数据"""
+    now = now_iso()
+    metadata_json = json_dumps(metadata)
+    with get_knowledge_db() as conn:
+        conn.execute(
+            "UPDATE documents SET metadata_json = ?, updated_at = ? WHERE id = ?",
+            (metadata_json, now, doc_id)
+        )
+
+
+def delete_extracted_by_source_document_key(document_key: str) -> None:
+    """删除与文档关联的所有抽取结果（断言、关系、任务）"""
+    with get_claims_db() as conn:
+        conn.execute("""
+            DELETE FROM claims WHERE source_document_id IN (
+                SELECT id FROM documents WHERE document_key = ?
+            )
+        """, (document_key,))
+    
+    with get_knowledge_db() as conn:
+        conn.execute("""
+            DELETE FROM relations WHERE source_document_id IN (
+                SELECT id FROM documents WHERE document_key = ?
+            )
+        """, (document_key,))
+        conn.execute("""
+            DELETE FROM tasks WHERE source_document_id IN (
+                SELECT id FROM documents WHERE document_key = ?
+            )
+        """, (document_key,))
+
+
+# ===== 进度跟踪（复盘.db）=====
+
+def insert_progress_log(content: str, log_time: str = None) -> None:
+    """插入进度记录"""
+    from kb.utils import now_iso
+    now = now_iso()
+    if log_time is None:
+        log_time = now
+    with get_review_db() as conn:
+        conn.execute("""
+            INSERT INTO progress_logs(content, log_time, created_at)
+            VALUES (?, ?, ?)
+        """, (content.strip(), log_time, now))
+
+
+def list_progress_logs(limit: int = 100) -> list:
+    """查询进度记录，按时间倒序（最新的在前面）"""
+    with get_review_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM progress_logs ORDER BY log_time DESC, id DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+    return rows
+
+
+def delete_progress_log(log_id: int) -> None:
+    """删除指定进度记录"""
+    with get_review_db() as conn:
+        conn.execute("DELETE FROM progress_logs WHERE id = ?", (log_id,))
+
+
+def clear_progress_logs() -> None:
+    """清空所有进度记录"""
+    with get_review_db() as conn:
+        conn.execute("DELETE FROM progress_logs")
