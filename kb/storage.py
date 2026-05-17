@@ -505,12 +505,12 @@ def get_connection():
         if not db_url:
             raise RuntimeError("DATABASE_URL 环境变量未设置，请检查 Streamlit Cloud Secrets 配置")
         
-        # 使用 psycopg2 解析连接字符串
+        # 使用 Supavisor 连接池（支持 IPv4）
         conn = psycopg2.connect(
             dbname="postgres",
             user="postgres",
             password="Yyq@2147483648",
-            host="db.kvmvaodlznttvtfsjqpl.supabase.co",
+            host="pool.kvmvaodlznttvtfsjqpl.supabase.com",
             port="5432",
             sslmode="require"
         )
