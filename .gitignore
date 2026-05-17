@@ -4,5 +4,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 logs/
-data/cognitive_os.db
+
+# 数据库文件（本地数据不提交）
+data/*.db
+!data/.gitkeep
 data/exports/

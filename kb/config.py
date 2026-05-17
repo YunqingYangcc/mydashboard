@@ -9,7 +9,14 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
 
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Shanghai")
+
+# 多数据库配置（按业务分库）
+DATABASE_KNOWLEDGE = ROOT_DIR / os.getenv("DATABASE_KNOWLEDGE", "data/知识库.db")
+DATABASE_CLAIMS = ROOT_DIR / os.getenv("DATABASE_CLAIMS", "data/认知闭环.db")
+DATABASE_REVIEW = ROOT_DIR / os.getenv("DATABASE_REVIEW", "data/复盘.db")
+# 保留旧路径兼容
 DATABASE_PATH = ROOT_DIR / os.getenv("DATABASE_PATH", "data/cognitive_os.db")
+
 LOG_DIR = ROOT_DIR / os.getenv("LOG_DIR", "logs")
 INBOX_DIR = ROOT_DIR / os.getenv("INBOX_DIR", "data/inbox")
 EXPORT_DIR = ROOT_DIR / os.getenv("EXPORT_DIR", "data/exports")
@@ -51,7 +58,7 @@ MODEL_DIRECTOR = os.getenv("MODEL_DIRECTOR", "deepseek-v3")
 
 
 def ensure_directories() -> None:
-    for path in [DATABASE_PATH.parent, LOG_DIR, INBOX_DIR, EXPORT_DIR]:
+    for path in [DATABASE_KNOWLEDGE.parent, DATABASE_CLAIMS.parent, DATABASE_REVIEW.parent, LOG_DIR, INBOX_DIR, EXPORT_DIR]:
         Path(path).mkdir(parents=True, exist_ok=True)
 
 
