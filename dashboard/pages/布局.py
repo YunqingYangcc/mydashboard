@@ -14,6 +14,7 @@ from kb.storage import (
     get_learned_items,
     init_db,
     link_document_to_knowledge,
+    list_claims,
     reset_knowledge_progress,
     unlink_document_from_knowledge,
     upsert_knowledge_item,
@@ -448,6 +449,33 @@ def render_category(layer: str, category: str, info: dict, learned_items: set, c
 
 
 # ===== 知识点-文档关联展示 =====
+def _get_linked_claims(layer: str, category: str, info: dict):
+    """根据章节映射，自动获取关联的断言"""
+    # 分类级映射
+    cat_key = f"{layer}|{category}"
+    chapter = CHAPTER_MAP.get(cat_key)
+    claims = []
+    if chapter:
+        # 精确匹配该章节
+        claims = _claims_by_chapter.get(chapter, [])
+        # 同时匹配所有子章节（如 chapter="P0-基础设施/AI芯片"，也匹配 "P0-基础设施/AI芯片/GPU训练"）
+        for ch, cl in _claims_by_chapter.items():
+            if ch.startswith(chapter + "/"):
+                claims.extend(cl)
+    # 子项章节映射
+    children = info.get("children", {})
+    child_claims = []
+    for child in children:
+        child_key = f"{layer}|{category}|{child}"
+        ch = CHAPTER_MAP.get(child_key)
+        if ch:
+            child_claims.extend(_claims_by_chapter.get(ch, []))
+            for ch2, cl2 in _claims_by_chapter.items():
+                if ch2.startswith(ch + "/"):
+                    child_claims.extend(cl2)
+    return claims, child_claims
+
+
 def render_category_with_docs(layer: str, category: str, info: dict, learned_items: set, col, doc_links: dict, starred_docs: list):
     """渲染知识点卡片，包含文档关联功能"""
     if category == "intro":
@@ -457,18 +485,24 @@ def render_category_with_docs(layer: str, category: str, info: dict, learned_ite
     is_learned = item_key in learned_items
     linked_docs = doc_links.get(item_key, [])
     
+    # 自动关联断言
+    cat_claims, child_claims = _get_linked_claims(layer, category, info)
+    all_claims = cat_claims + child_claims
+    claim_count = len(all_claims)
+    
     with col:
         # 优先级标签
         priority = info.get("priority", "")
         if priority:
             st.markdown(f"{priority}")
         
-        # 分类标题 + 文档数量
-        doc_count = len(linked_docs)
-        if doc_count > 0:
-            st.markdown(f"**{category}** 📄 {doc_count}")
-        else:
-            st.markdown(f"**{category}**")
+        # 分类标题 + 文档数量 + 断言数量
+        parts = [f"**{category}**"]
+        if len(linked_docs) > 0:
+            parts.append(f"📄 {len(linked_docs)}")
+        if claim_count > 0:
+            parts.append(f"🧠 {claim_count}")
+        st.markdown(" ".join(parts))
         
         # 勾选框
         checked = st.checkbox(
@@ -517,22 +551,30 @@ def render_category_with_docs(layer: str, category: str, info: dict, learned_ite
                         unlink_document_from_knowledge(item_key, doc_id)
                         st.rerun()
         
+        # 自动关联断言列表（无需手动关联）
+        if all_claims:
+            for claim in all_claims:
+                claim_id = claim.get("id")
+                status_icon = {"validated": "✅", "invalidated": "❌", "pending": "⏳"}.get(claim.get("verification_status", "pending"), "⏳")
+                subject = claim.get("subject") or claim.get("statement", "")[:20]
+                st.caption(f"🧠 {status_icon} {subject}")
+        
         # 添加关联按钮（如果有收藏文档）
         if starred_docs:
-            with st.expander("🔗 关联文档"):
-                for doc in starred_docs[:10]:  # 最多显示10个
-                    doc_id = doc["id"]
-                    already_linked = any(d["id"] == doc_id for d in linked_docs)
-                    if st.button(
-                        f"{'✅' if already_linked else '➕'} {doc.get('title', '未命名')[:25]}",
-                        key=f"link_{doc_id}_{item_key[:10]}",
-                        use_container_width=True
-                    ):
-                        if already_linked:
-                            unlink_document_from_knowledge(item_key, doc_id)
-                        else:
-                            link_document_to_knowledge(item_key, doc_id)
-                        st.rerun()
+            st.markdown("**🔗 关联文档**")
+            for doc in starred_docs[:10]:  # 最多显示10个
+                doc_id = doc["id"]
+                already_linked = any(d["id"] == doc_id for d in linked_docs)
+                if st.button(
+                    f"{'✅' if already_linked else '➕'} {doc.get('title', '未命名')[:25]}",
+                    key=f"link_{doc_id}_{item_key[:10]}",
+                    use_container_width=True
+                ):
+                    if already_linked:
+                        unlink_document_from_knowledge(item_key, doc_id)
+                    else:
+                        link_document_to_knowledge(item_key, doc_id)
+                    st.rerun()
         
         # 子项
         children = info.get("children", {})
@@ -543,6 +585,10 @@ def render_category_with_docs(layer: str, category: str, info: dict, learned_ite
                 child_learned = child_key in learned_items
                 child_docs = doc_links.get(child_key, [])
                 doc_cnt = len(child_docs)
+                # 自动关联断言
+                child_ch = CHAPTER_MAP.get(child_key)
+                child_claim_list = _claims_by_chapter.get(child_ch, []) if child_ch else []
+                claim_cnt = len(child_claim_list)
                 
                 child_col1, child_col2 = st.columns([3, 1])
                 with child_col1:
@@ -553,6 +599,8 @@ def render_category_with_docs(layer: str, category: str, info: dict, learned_ite
                     )
                     if doc_cnt > 0:
                         st.caption(f"   📄 {doc_cnt}篇")
+                    if claim_cnt > 0:
+                        st.caption(f"   🧠 {claim_cnt}条断言")
                 with child_col2:
                     pass
                 
@@ -569,6 +617,12 @@ def render_category_with_docs(layer: str, category: str, info: dict, learned_ite
                         st.caption(f"   🎯 {child_info['goal']}")
                     if child_info.get("companies"):
                         st.caption(f"   🏢 {child_info['companies']}")
+                
+                # 显示子项关联的断言
+                for claim in child_claim_list:
+                    status_icon = {"validated": "✅", "invalidated": "❌", "pending": "⏳"}.get(claim.get("verification_status", "pending"), "⏳")
+                    subject = claim.get("subject") or claim.get("statement", "")[:20]
+                    st.caption(f"   🧠 {status_icon} {subject}")
         
         st.markdown("---")
 
@@ -578,6 +632,71 @@ starred_docs = [d for d in all_docs if (d.get("metadata_json") or {}).get("starr
 
 # 获取知识点-文档关联数据
 doc_links = get_all_knowledge_doc_links()
+
+# ===== 章节名映射：KNOWLEDGE_TREE 分类名 → claims.chapter =====
+# 知识点 key 格式: "P0 基础设施层|💻 AI芯片"，需映射到 chapter 如 "P0-基础设施/AI芯片"
+CHAPTER_MAP = {
+    "P0 基础设施层|💻 AI芯片": "P0-基础设施/AI芯片",
+    "P0 基础设施层|🧠 存储与内存": "P0-基础设施/存储与内存",
+    "P0 基础设施层|🖥️ AI服务器": "P0-基础设施/AI服务器",
+    "P0 基础设施层|🔌 高速互联": "P0-基础设施/高速互联",
+    "P0 基础设施层|📡 云计算/CapEx": "P0-基础设施/云计算",
+    "P0 数据层|📊 训练数据": "P0-数据/训练数据",
+    "P0 数据层|🏷️ 数据标注与RLHF": "P0-数据/标注与RLHF",
+    "P0 数据层|🔒 数据治理": "P0-数据/数据治理",
+    "P0 数据层|🔢 向量数据库": "P0-数据/向量数据库",
+    "P0 软件层|🗡️ CUDA生态": "P0-软件/CUDA生态",
+    "P0 软件层|🔧 AI框架": "P0-软件/AI框架",
+    "P0 软件层|📦 MLOps": "P0-软件/MLOps",
+    "P0 软件层|🔌 Agent框架": "P0-软件/Agent框架",
+    "P1 能源电力层|⚡ 电力需求": "P1-能源/电力需求",
+    "P1 能源电力层|🔋 电力供给": "P1-能源/电力供给",
+    "P1 能源电力层|🌡️ 散热": "P1-能源/散热",
+    "P1 半导体制造|🏭 晶圆代工": "P1-制造/晶圆代工",
+    "P1 半导体制造|⚙️ 半导体设备": "P1-制造/设备材料",
+    "P1 半导体制造|🧪 半导体材料": "P1-制造/设备材料",
+    "P1 半导体制造|📦 封测": "P1-制造/封装测试",
+    "P2 模型层|🧠 基础大模型": "P2-应用/AI Agent",
+    "P2 模型层|🦾 Agent/具身智能": "P2-应用/具身智能",
+    "P2 安全/治理层|⚖️ 合规与审计": "P3-认知/思维模型",
+    "P2 安全/治理层|🛡️ AI安全": "P3-认知/投资框架",
+    "P2 垂直应用层|🖥️ 开发/编程": "P2-应用/AI Agent",
+    "P2 垂直应用层|📝 办公/知识": "P2-应用/AI Agent",
+    "P2 垂直应用层|🔍 搜索/信息": "P2-应用/AI Agent",
+    "P2 垂直应用层|🚗 智能驾驶": "P2-应用/自动驾驶",
+    "P2 垂直应用层|🏥 医疗AI": "P2-应用/AI Agent",
+    "P2 垂直应用层|💰 金融AI": "P2-应用/AI Agent",
+}
+
+# ===== 加载所有断言，按 chapter 分组 =====
+_all_claims = list_claims(limit=500)
+_claims_by_chapter = {}
+for c in _all_claims:
+    ch = c.get("chapter") or "未分类"
+    _claims_by_chapter.setdefault(ch, []).append(c)
+
+# 🔧 扩展 CHAPTER_MAP：自动推导子章节映射
+for layer_cat, chapter in list(CHAPTER_MAP.items()):
+    if "|" in layer_cat and layer_cat.count("|") == 2:
+        # 已是子章节映射，跳过
+        continue
+    # 这是分类级映射，推导出子章节
+    for ch in _claims_by_chapter:
+        if ch.startswith(chapter + "/"):
+            child_name = ch.split("/")[-1]
+            key = f"{layer_cat}|{child_name}"
+            if key not in CHAPTER_MAP:
+                CHAPTER_MAP[key] = ch
+
+# 🔧 反向：分类级 chapter 也关联到对应知识点的所有子项
+# 例如 chapter="P0-基础设施/AI芯片" 应关联到 "P0 基础设施层|💻 AI芯片" 下所有子项
+_reverse_map = {}  # chapter_prefix -> list of (layer_cat, child_name)
+for k, v in CHAPTER_MAP.items():
+    if v not in _reverse_map:
+        _reverse_map[v] = []
+    if k.count("|") == 2:
+        _layer_cat, _child = k.rsplit("|", 1)
+        _reverse_map[v].append((_layer_cat, _child))
 
 # 层级图标映射
 LAYER_ICON_MAP = {

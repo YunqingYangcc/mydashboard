@@ -20,6 +20,8 @@ def persist_document(document: dict[str, Any]) -> dict[str, Any]:
 def persist_extract_result(extract_result: ExtractResult, document: dict[str, Any]) -> dict[str, int]:
     document_key = document.get("document_key")
     document_row = get_document_by_key(document_key) if document_key else None
+    # 获取文档的章节，用于关联断言
+    doc_chapter = (document_row.get("chapter") if document_row else None) or document.get("chapter")
     metadata = {
         "source_document_key": document_key,
         "source_document_hash": document.get("hash"),
@@ -35,6 +37,7 @@ def persist_extract_result(extract_result: ExtractResult, document: dict[str, An
         insert_claim(
             {
                 "claim_type": "markdown_claim",
+                "chapter": doc_chapter,
                 "subject": claim["subject"],
                 "statement": claim["statement"],
                 "stance": claim.get("stance", "neutral"),

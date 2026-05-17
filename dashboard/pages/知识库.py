@@ -7,14 +7,13 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from dashboard.components import init_page_style, metric_card, render_document_preview, render_signature, section_title, show_table
+from dashboard.components import init_page_style, metric_card, render_document_preview, render_notes_list, render_signature, section_title, show_table
 from kb.storage import (
     fetch_latest_documents,
     get_document_by_key,
+    fetch_quizzes_by_document_key,
     init_db,
-    list_extracted_claims_by_document_key,
-    list_extracted_relations_by_document_key,
-    list_extracted_tasks_by_document_key,
+    list_claims,
     search_documents,
     update_document_metadata,
 )
@@ -27,7 +26,7 @@ st.caption("管理你的学习文档，支持章节筛选和收藏")
 
 # ===== 章节筛选选项 =====
 CHAPTER_OPTIONS = [
-    "全部章节",
+    "全部文章",
     "未分类",
     # P0 基础设施层
     "P0-基础设施/AI芯片",
@@ -65,7 +64,7 @@ with st.sidebar:
     if "show_starred_only" not in st.session_state:
         st.session_state.show_starred_only = False
     
-    show_starred = st.toggle("⭐ 仅看收藏", value=st.session_state.show_starred_only)
+    show_starred = st.toggle("📌 仅看已归类", value=st.session_state.show_starred_only)
     st.session_state.show_starred_only = show_starred
     
     # 章节筛选
@@ -75,30 +74,23 @@ with st.sidebar:
     search_text = st.text_input("🔍 搜索", placeholder="如：NVDA、HBM", label_visibility="collapsed")
     
     docs = search_documents(search_text, limit=100) if search_text else fetch_latest_documents(limit=100)
-    markdown_docs = [d for d in docs if (d.get("metadata_json") or {}).get("render_mode") == "markdown"]
+    display_docs = docs
     
-    # 默认只看 Markdown
-    if "show_all_docs" not in st.session_state:
-        st.session_state.show_all_docs = False
-    
-    show_all = st.toggle("显示全部文档", value=st.session_state.show_all_docs)
-    st.session_state.show_all_docs = show_all
-    
-    display_docs = docs if show_all else markdown_docs
-    
-    # 应用收藏筛选
+    # 应用归类筛选
     if show_starred:
         display_docs = [d for d in display_docs if (d.get("metadata_json") or {}).get("starred", False)]
     
-    # 应用章节筛选
+    # 应用章节筛选（章节存在 metadata_json["layer"] 中）
     if selected_chapter == "未分类":
-        display_docs = [d for d in display_docs if not d.get("chapter")]
-    elif selected_chapter != "全部章节":
-        display_docs = [d for d in display_docs if d.get("chapter") == selected_chapter]
+        display_docs = [d for d in display_docs if not (d.get("metadata_json") or {}).get("layer")]
+    elif selected_chapter != "全部文章":
+        display_docs = [d for d in display_docs if (d.get("metadata_json") or {}).get("layer") == selected_chapter]
     
     # 统计
     starred_count = len([d for d in docs if (d.get("metadata_json") or {}).get("starred", False)])
-    st.caption(f"⭐ 收藏 {starred_count} | 📄 共 {len(display_docs)} 篇")
+    st.caption(f"📌 已归类 {starred_count} | 📄 共 {len(display_docs)} 篇")
+    
+    # 选择文档列表
     
     if not display_docs:
         st.info("没有匹配的文档")
@@ -115,8 +107,8 @@ with st.sidebar:
 if not selected_doc:
     st.info("👈 请在左侧选择一篇文档")
 else:
-    # 文档预览
-    section_title("文档预览")
+    # 文档打标
+    section_title("文档打标")
     
     # 收藏按钮和层级标签
     doc_id = selected_doc["id"]
@@ -126,15 +118,15 @@ else:
     
     col1, col2, col3 = st.columns([1, 3, 20])
     with col1:
-        if st.button("⭐" if not is_starred else "⭐", type="primary" if is_starred else "secondary", help="收藏此文档"):
+        if st.button("📌" if not is_starred else "📌", type="primary" if is_starred else "secondary", help="归类此文档"):
             meta["starred"] = not is_starred
             update_document_metadata(doc_id, meta)
             st.rerun()
     with col2:
         new_layer = st.selectbox(
             "📂 层级",
-            LAYER_OPTIONS,
-            index=LAYER_OPTIONS.index(current_layer) if current_layer in LAYER_OPTIONS else 0,
+            CHAPTER_OPTIONS,
+            index=CHAPTER_OPTIONS.index(current_layer) if current_layer in CHAPTER_OPTIONS else 0,
             label_visibility="collapsed"
         )
         if new_layer != current_layer:
@@ -143,8 +135,12 @@ else:
             st.rerun()
     with col3:
         if is_starred:
-            st.caption(f"⭐ 已收藏 · {current_layer}")
+            st.caption(f"📌 已归类 · {current_layer}")
     
+    # 显示文档标题作为标识
+    st.caption(f"📄 {selected_doc.get('title', '未命名文档')}")
+    
+    # 文档预览
     render_document_preview(selected_doc)
     
     st.divider()
@@ -177,50 +173,38 @@ else:
             st.rerun()
     
     st.divider()
+
+    # 关联的学习笔记（断言）
+    # 从 metadata_json 里取 layer 作为章节
+    meta = selected_doc.get("metadata_json") or {}
+    doc_chapter = meta.get("layer") or selected_doc.get("chapter")
     
-    # 抽取统计
-    doc_key = selected_doc.get("document_key") or selected_doc.get("hash", "")
-    claims = list_extracted_claims_by_document_key(doc_key)
-    relations = list_extracted_relations_by_document_key(doc_key)
-    tasks = list_extracted_tasks_by_document_key(doc_key)
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        metric_card("断言", len(claims), "判断")
-    with col2:
-        metric_card("关系", len(relations), "图谱边")
-    with col3:
-        metric_card("任务", len(tasks), "后续动作")
-    
-    # 详情 Tab
-    tab1, tab2, tab3 = st.tabs(["断言 Claims", "关系 Relations", "任务 Tasks"])
-    
-    with tab1:
-        if claims:
-            show_table(
-                [{"主体": c.get("subject"), "判断": c.get("statement"), "周期": c.get("review_cycle")} 
-                 for c in claims],
-                height=280,
-            )
+    if doc_chapter and doc_chapter != "未分类":
+        chapter_claims = list_claims(chapter=doc_chapter)
+        st.subheader(f"🧠 关联的学习笔记（{doc_chapter}）")
+        if chapter_claims:
+            # 使用改进的卡片式布局（纯展示）
+            render_notes_list(chapter_claims)
+            
+            # 统一的跳转按钮（只有一个）
+            if st.button(f"📖 查看 {doc_chapter} 全部笔记", use_container_width=True, type="primary"):
+                st.session_state["jump_chapter"] = doc_chapter
+                st.switch_page("pages/学习笔记.py")
         else:
-            st.info("暂无断言")
-    
-    with tab2:
-        if relations:
-            show_table(
-                [{"主体": r.get("subject_name"), "关系": r.get("relation_type"), "客体": r.get("object_name")} 
-                 for r in relations],
-                height=280,
-            )
+            st.info(f"该章节暂无学习笔记，请在「学习笔记」页面为 {doc_chapter} 添加断言。")
+    else:
+        st.info("📂 请先在上方选择章节（📂 层级），即可自动关联该章节的学习笔记。")
+
+    # 关联的试题
+    st.divider()
+    doc_key = selected_doc.get("document_key")
+    if doc_key:
+        quizzes = fetch_quizzes_by_document_key(doc_key)
+        if quizzes:
+            st.subheader(f"📝 关联试题（{len(quizzes)}题）")
+            st.info(f"本文档已录入 {len(quizzes)} 道试题，点击下方按钮开始答题")
+            if st.button(f"📝 开始答题", use_container_width=True, type="primary"):
+                st.session_state["quiz_document_key"] = doc_key
+                st.switch_page("pages/试题.py")
         else:
-            st.info("暂无关系")
-    
-    with tab3:
-        if tasks:
-            show_table(
-                [{"标题": t.get("title"), "优先级": t.get("priority"), "状态": t.get("status")} 
-                 for t in tasks],
-                height=280,
-            )
-        else:
-            st.info("暂无任务")
+            st.info("📝 本文档暂无关联试题，可在「试题管理」页面录入。")

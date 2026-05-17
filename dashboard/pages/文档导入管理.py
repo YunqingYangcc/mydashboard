@@ -1,4 +1,4 @@
-"""文档导入管理 - 上传、RSS订阅、文件夹导入"""
+"""文档导入管理 - 将外部内容导入知识库"""
 import sys
 from pathlib import Path
 
@@ -8,16 +8,15 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from dashboard.components import init_page_style
-from kb.storage import init_db, fetch_latest_documents, upsert_document
-from kb.ingest import ingest_folder
+from dashboard.components import init_page_style, render_signature
+from kb.storage import init_db, upsert_document
 from kb.utils import now_iso
 import hashlib
 
 init_db()
 init_page_style()
 
-st.title("📥 文档导入管理")
+st.title("📥 文档导入")
 st.caption("将外部内容导入知识库")
 
 # ===== 章节选项 =====
@@ -66,59 +65,27 @@ CHAPTER_OPTIONS = [
     "P1-制造/设备材料",
 ]
 
-tab1, tab2 = st.tabs(["📁 文件夹导入", "📄 手动录入"])
+# 手动录入文档
+st.markdown("### 📄 手动录入文档")
 
-# Tab 1: 文件夹导入
-with tab1:
-    st.subheader("从文件夹导入")
-    st.info(f"📂 监听目录: `data/inbox/`")
+with st.form("import_form", clear_on_submit=True):
+    title = st.text_input("标题 *", placeholder="输入文档标题")
     
-    # 导入时分配的章节
-    chapter_for_import = st.selectbox("导入后分配章节", CHAPTER_OPTIONS, key="import_chapter")
+    content = st.text_area("内容 *", height=300, placeholder="输入文档内容...")
     
-    # 显示已有文件
-    inbox_dir = ROOT_DIR / "data" / "inbox"
-    if inbox_dir.exists():
-        files = list(inbox_dir.glob("*.md")) + list(inbox_dir.glob("*.txt"))
-        if files:
-            st.write(f"发现 {len(files)} 个文件:")
-            for f in files:
-                st.text(f"- {f.name}")
-        else:
-            st.info("inbox 文件夹暂无 .md 或 .txt 文件")
+    col1, col2 = st.columns([2, 2])
+    with col1:
+        chapter = st.selectbox("所属章节", CHAPTER_OPTIONS)
+    with col2:
+        source = st.text_input("来源", placeholder="如: 公众号、书籍、网页等")
     
-    if st.button("🔄 执行导入", type="primary"):
-        with st.spinner("正在导入..."):
-            try:
-                docs = ingest_folder()
-                count = 0
-                for doc in docs:
-                    doc_key = hashlib.sha256(f"{doc['title']}{now_iso()}".encode()).hexdigest()[:16]
-                    upsert_document({
-                        "title": doc.get("title", "未命名"),
-                        "content": doc.get("content", ""),
-                        "source": doc.get("source_name", "folder"),
-                        "chapter": chapter_for_import if chapter_for_import != "未分类" else None,
-                        "tags_json": ",".join(doc.get("tags", [])),
-                        "render_mode": doc.get("metadata", {}).get("render_mode", "markdown"),
-                        "document_key": doc_key
-                    })
-                    count += 1
-                st.success(f"✅ 导入完成！处理了 {count} 个文件，已分配章节: {chapter_for_import}")
-            except Exception as e:
-                st.error(f"导入失败: {e}")
-
-# Tab 2: 手动录入
-with tab2:
-    st.subheader("手动录入文档")
-    
-    title = st.text_input("标题")
-    content = st.text_area("内容", height=200)
-    chapter = st.selectbox("所属章节", CHAPTER_OPTIONS)
-    source = st.text_input("来源", placeholder="如: 手动录入、公众号、书籍等")
     tags = st.text_input("标签（逗号分隔）", placeholder="如: AI, 投资, 认知")
     
-    if st.button("💾 保存文档", type="primary"):
+    st.caption("* 为必填项")
+    
+    submitted = st.form_submit_button("💾 保存文档", type="primary", use_container_width=True)
+    
+    if submitted:
         if title and content:
             doc_key = hashlib.sha256(f"{title}{now_iso()}".encode()).hexdigest()[:16]
             upsert_document({
@@ -131,5 +98,45 @@ with tab2:
                 "document_key": doc_key
             })
             st.success(f"✅ 文档已保存！章节: {chapter}")
+            st.balloons()
         else:
-            st.warning("⚠️ 请填写标题和内容")
+            if not title:
+                st.error("⚠️ 请填写标题")
+            if not content:
+                st.error("⚠️ 请填写内容")
+
+st.divider()
+
+# 导入提示
+st.markdown("### 💡 导入提示")
+st.info(
+    """
+    **支持的导入方式：**
+    - 📄 手动录入：直接在此页面填写标题、内容和元数据
+    - 📁 文件夹导入：将 .md 或 .txt 文件放入 `data/inbox/` 目录，系统会自动导入
+    
+    **章节分类建议：**
+    - P0 开头：基础设施层（AI芯片、存储、服务器、互联、云计算）
+    - P0 数据/软件：数据层和软件层
+    - P1 开头：能源电力层、半导体制造层
+    """
+)
+
+# 侧边栏
+with st.sidebar:
+    st.markdown("### 📥 导入指南")
+    st.markdown(
+        """
+        **文档质量建议：**
+        - 标题简洁明确
+        - 内容结构清晰（使用 Markdown 格式）
+        - 添加合适的标签便于检索
+        - 选择正确的章节进行分类
+        
+        **自动导入：**
+        将文件放入 `data/inbox/` 目录，
+        系统会在下次启动时自动导入。
+        """
+    )
+    st.divider()
+    render_signature()

@@ -169,13 +169,47 @@ def render_signal_summary(score: dict) -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def render_notes_list(notes: list[dict], chapter: str = "") -> None:
+    """
+    渲染笔记列表，使用卡片式布局（纯展示，不包含跳转按钮）
+    notes: 笔记列表，每个笔记包含 id, subject, statement, created_at 等字段
+    chapter: 章节名称（可选，用于显示）
+    """
+    if not notes:
+        st.info("暂无笔记")
+        return
+    
+    for note in notes:
+        subject = note.get("subject") or note.get("statement", "")[:40]
+        statement = note.get("statement", "")[:100]  # 预览前100个字符
+        created_at = note.get("created_at", "")
+        
+        # 使用卡片样式渲染每条笔记（纯展示）
+        st.markdown(
+            f"""
+            <div class="yyq-panel" style="margin-bottom: 10px;">
+                <div style="font-size: 0.9rem; font-weight: 600; color: #e2e8f0; margin-bottom: 6px;">
+                    📝 {subject}
+                </div>
+                <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 8px; line-height: 1.4;">
+                    {statement}...
+                </div>
+                <div style="font-size: 0.75rem; color: #64748b;">
+                    📅 {created_at}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
 def render_document_preview(document: dict | None) -> None:
     if not document:
         st.info("请选择一篇文档")
         return
 
     metadata = document.get("metadata_json", {}) or {}
-    tags = document.get("tags_json", []) or []
+    tags = document.get("tags_json", []) or {}
 
     st.markdown(f"### {document.get('title', '未命名文档')}")
 

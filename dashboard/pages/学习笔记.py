@@ -14,7 +14,13 @@ from kb.utils import now_iso
 init_db()
 init_page_style()
 
-st.title("🧠 认知闭环")
+# 读取跳转参数（从其他页面通过 session_state 传递，如知识库页面点击关联笔记）
+jump_chapter = st.session_state.get("jump_chapter", None)
+# 使用后清除，避免重复触发
+if "jump_chapter" in st.session_state:
+    del st.session_state["jump_chapter"]
+
+st.title("🔄 学习笔记")
 st.caption("个人断言笔记的展示、统计、修改、筛选与分类")
 
 # ===== 章节选项 =====
@@ -86,7 +92,12 @@ st.divider()
 filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
 
 with filter_col1:
-    chapter_filter = st.selectbox("章节", CHAPTER_OPTIONS, index=0)
+    # 如果从其他页面跳转过来并携带 chapter 参数，自动选中
+    if jump_chapter and jump_chapter in CHAPTER_OPTIONS:
+        chapter_idx = CHAPTER_OPTIONS.index(jump_chapter)
+    else:
+        chapter_idx = 0
+    chapter_filter = st.selectbox("章节", CHAPTER_OPTIONS, index=chapter_idx)
 
 with filter_col2:
     status_filter = st.selectbox("状态", ["全部", "✅ 已验证", "❌ 已驳回", "⏳ 待验证"], index=0)
