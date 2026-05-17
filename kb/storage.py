@@ -128,6 +128,7 @@ def _init_knowledge_db() -> None:
         hash TEXT NOT NULL UNIQUE,
         document_key TEXT,
         content_hash TEXT,
+        chapter TEXT,
         tags_json TEXT DEFAULT '[]',
         metadata_json TEXT DEFAULT '{}',
         created_at TEXT NOT NULL,
@@ -356,7 +357,7 @@ def upsert_document(payload: dict) -> dict:
             conn.execute("""
                 UPDATE documents SET
                     title=?, content=?, summary=?, url=?, doc_date=?,
-                    tags_json=?, metadata_json=?, updated_at=?
+                    chapter=?, tags_json=?, metadata_json=?, updated_at=?
                 WHERE hash=?
             """, (
                 payload.get("title"),
@@ -364,6 +365,7 @@ def upsert_document(payload: dict) -> dict:
                 payload.get("summary"),
                 payload.get("url"),
                 payload.get("doc_date"),
+                payload.get("chapter"),
                 json_dumps(payload.get("tags_json", [])),
                 json_dumps(payload.get("metadata_json", {})),
                 now,
@@ -374,8 +376,8 @@ def upsert_document(payload: dict) -> dict:
             cursor = conn.execute("""
                 INSERT INTO documents(
                     source_type, source_name, title, content, summary, author, url, doc_date,
-                    hash, document_key, content_hash, tags_json, metadata_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    hash, document_key, content_hash, chapter, tags_json, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 payload.get("source_type", "manual"),
                 payload.get("source_name", "manual"),
@@ -388,6 +390,7 @@ def upsert_document(payload: dict) -> dict:
                 doc_hash,
                 payload.get("document_key"),
                 payload.get("content_hash"),
+                payload.get("chapter"),
                 json_dumps(payload.get("tags_json", [])),
                 json_dumps(payload.get("metadata_json", {})),
                 now,
@@ -832,3 +835,131 @@ def insert_action(payload: dict) -> None:
             now,
             now
         ))
+
+
+# ===== 文档-知识点关联 =====
+
+def link_document_to_knowledge(item_key: str, document_id: int) -> bool:
+    """关联文档到知识点"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        try:
+            conn.execute("""
+                INSERT OR IGNORE INTO knowledge_documents(item_key, document_id, linked_at)
+                VALUES (?, ?, ?)
+            """, (item_key, document_id, now))
+            return True
+        except Exception:
+            return False
+
+
+def unlink_document_from_knowledge(item_key: str, document_id: int) -> bool:
+    """取消文档与知识点的关联"""
+    with get_knowledge_db() as conn:
+        conn.execute("""
+            DELETE FROM knowledge_documents WHERE item_key = ? AND document_id = ?
+        """, (item_key, document_id))
+        return True
+
+
+def get_all_knowledge_doc_links() -> dict:
+    """获取所有文档-知识点关联"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("SELECT * FROM knowledge_documents").fetchall()
+    return {row["document_id"]: row["item_key"] for row in rows}
+
+
+def get_documents_by_knowledge(item_key: str) -> list:
+    """获取知识点关联的文档"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("""
+            SELECT d.* FROM documents d
+            JOIN knowledge_documents kd ON d.id = kd.document_id
+            WHERE kd.item_key = ?
+            ORDER BY kd.linked_at DESC
+        """, (item_key,)).fetchall()
+    return _decode_rows(rows, ["tags_json", "metadata_json"])
+
+
+def get_knowledge_by_document(document_id: int) -> list:
+    """获取文档关联的知识点"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("""
+            SELECT kp.* FROM knowledge_progress kp
+            JOIN knowledge_documents kd ON kp.item_key = kd.item_key
+            WHERE kd.document_id = ?
+        """, (document_id,)).fetchall()
+    return rows
+
+
+def reset_knowledge_progress() -> None:
+    """重置所有学习进度"""
+    with get_knowledge_db() as conn:
+        conn.execute("UPDATE knowledge_progress SET is_learned = 0, learned_at = NULL")
+
+
+def update_claim_validation(claim_id: int, validation_status: str, note: str = None) -> None:
+    """更新断言验证状态"""
+    now = now_iso()
+    with get_claims_db() as conn:
+        if note:
+            conn.execute("""
+                UPDATE claims SET verification_status = ?, notes = ?, updated_at = ?
+                WHERE id = ?
+            """, (validation_status, note, now, claim_id))
+        else:
+            conn.execute("""
+                UPDATE claims SET verification_status = ?, updated_at = ?
+                WHERE id = ?
+            """, (validation_status, now, claim_id))
+
+
+def list_extracted_claims_by_document_key(document_key: str, limit: int = 100) -> list:
+    """根据文档key获取抽取的断言"""
+    with get_claims_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM claims WHERE source_document_id IN (
+                SELECT id FROM documents WHERE document_key = ?
+            ) LIMIT ?
+        """, (document_key, limit)).fetchall()
+    return _decode_rows(rows, ["metadata_json"])
+
+
+def list_extracted_claims_by_document_hash(document_hash: str, limit: int = 100) -> list:
+    """根据文档hash获取抽取的断言"""
+    with get_claims_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM claims WHERE source_document_id IN (
+                SELECT id FROM documents WHERE hash = ?
+            ) LIMIT ?
+        """, (document_hash, limit)).fetchall()
+    return _decode_rows(rows, ["metadata_json"])
+
+
+def list_extracted_tasks_by_document_key(document_key: str, limit: int = 100) -> list:
+    """根据文档key获取抽取的任务"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM tasks WHERE source_document_id IN (
+                SELECT id FROM documents WHERE document_key = ?
+            ) LIMIT ?
+        """, (document_key, limit)).fetchall()
+    return _decode_rows(rows)
+
+
+def list_extracted_tasks_by_document_hash(document_hash: str, limit: int = 100) -> list:
+    """根据文档hash获取抽取的任务"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM tasks WHERE source_document_id IN (
+                SELECT id FROM documents WHERE hash = ?
+            ) LIMIT ?
+        """, (document_hash, limit)).fetchall()
+    return _decode_rows(rows)
+
+
+def update_task_status(task_id: int, status: str) -> None:
+    """更新任务状态"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        conn.execute("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?", (status, now, task_id))

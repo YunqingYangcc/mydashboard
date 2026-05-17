@@ -23,22 +23,38 @@ init_db()
 init_page_style()
 
 st.title("📝 知识库")
-st.caption("管理你的学习文档，支持层级筛选和收藏")
+st.caption("管理你的学习文档，支持章节筛选和收藏")
 
-# ===== 层级筛选选项 =====
-LAYER_OPTIONS = [
-    "全部",
-    "🪨 原材料层",
-    "🔧 设备层", 
-    "🏭 制造层",
-    "💻 芯片层",
-    "🖥️ 系统层",
-    "📡 云层",
-    "📊 数据层",
-    "🔧 软件层",
-    "🤖 模型层",
-    "🚗 应用层",
-    "⚡ 能源层",
+# ===== 章节筛选选项 =====
+CHAPTER_OPTIONS = [
+    "全部章节",
+    "未分类",
+    # P0 基础设施层
+    "P0-基础设施/AI芯片",
+    "P0-基础设施/AI芯片/GPU训练",
+    "P0-基础设施/AI芯片/GPU推理",
+    "P0-基础设施/AI芯片/ASIC定制",
+    "P0-基础设施/AI芯片/NPU端侧",
+    "P0-基础设施/存储与内存/HBM",
+    "P0-基础设施/存储与内存/DRAM",
+    "P0-基础设施/AI服务器/整机",
+    "P0-基础设施/AI服务器/液冷",
+    "P0-基础设施/高速互联/800G光模块",
+    "P0-基础设施/高速互联/1.6T光模块",
+    "P0-基础设施/云计算/CapEx",
+    # P0 数据层
+    "P0-数据/训练数据",
+    "P0-数据/标注与RLHF",
+    # P0 软件层
+    "P0-软件/CUDA生态",
+    "P0-软件/AI框架",
+    "P0-软件/Agent框架",
+    # P1 能源电力层
+    "P1-能源/电力需求",
+    "P1-能源/电力供给",
+    # P1 半导体制造
+    "P1-制造/晶圆代工",
+    "P1-制造/封装测试",
 ]
 
 # ===== 侧边栏：文档选择 =====
@@ -52,8 +68,8 @@ with st.sidebar:
     show_starred = st.toggle("⭐ 仅看收藏", value=st.session_state.show_starred_only)
     st.session_state.show_starred_only = show_starred
     
-    # 层级筛选
-    selected_layer = st.selectbox("📂 筛选层级", LAYER_OPTIONS)
+    # 章节筛选
+    selected_chapter = st.selectbox("📂 筛选章节", CHAPTER_OPTIONS)
     
     # 搜索
     search_text = st.text_input("🔍 搜索", placeholder="如：NVDA、HBM", label_visibility="collapsed")
@@ -74,9 +90,11 @@ with st.sidebar:
     if show_starred:
         display_docs = [d for d in display_docs if (d.get("metadata_json") or {}).get("starred", False)]
     
-    # 应用层级筛选
-    if selected_layer != "全部":
-        display_docs = [d for d in display_docs if (d.get("metadata_json") or {}).get("layer") == selected_layer]
+    # 应用章节筛选
+    if selected_chapter == "未分类":
+        display_docs = [d for d in display_docs if not d.get("chapter")]
+    elif selected_chapter != "全部章节":
+        display_docs = [d for d in display_docs if d.get("chapter") == selected_chapter]
     
     # 统计
     starred_count = len([d for d in docs if (d.get("metadata_json") or {}).get("starred", False)])
