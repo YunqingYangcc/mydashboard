@@ -583,6 +583,9 @@ def _run_migrations(conn) -> None:
         # SQLite 迁移
         def _table_columns(table_name: str) -> set[str]:
             rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+            # PRAGMA 返回: cid, name, type, notnull, dflt_value, pk
+            if rows and isinstance(rows[0], dict):
+                return {row['name'] for row in rows}
             return {row[1] for row in rows}
         
         def _add_column(table_name: str, col: str, defn: str):
