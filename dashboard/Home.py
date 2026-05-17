@@ -67,6 +67,14 @@ with entry_col3:
 with entry_col4:
     st.page_link("pages/认知闭环自检.py", label="🔄 认知闭环自检", icon="🔄")
 
+entry_col5, entry_col6, entry_col7 = st.columns(3)
+with entry_col5:
+    st.page_link("pages/复盘编辑器.py", label="📝 复盘编辑器", icon="📝")
+with entry_col6:
+    st.page_link("pages/文档导入管理.py", label="📥 文档导入", icon="📥")
+with entry_col7:
+    st.page_link("pages/断言来源追溯.py", label="🔍 断言追溯", icon="🔍")
+
 # 签名
 with st.sidebar:
     render_signature()
