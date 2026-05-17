@@ -501,17 +501,18 @@ if not USE_POSTGRES:
 def get_connection():
     """统一连接接口"""
     if USE_POSTGRES:
-        from urllib.parse import urlparse
-        db_url = os.environ["DATABASE_URL"]
-        parsed = urlparse(db_url)
-        # 手动构建参数，避免密码中的特殊字符（如 @）导致解析错误
+        db_url = os.environ.get("DATABASE_URL", "")
+        if not db_url:
+            raise RuntimeError("DATABASE_URL 环境变量未设置，请检查 Streamlit Cloud Secrets 配置")
+        
+        # 使用 psycopg2 解析连接字符串
         conn = psycopg2.connect(
-            host=parsed.hostname,
-            port=parsed.port or 5432,
-            dbname=parsed.path.lstrip('/') or 'postgres',
-            user=parsed.username,
-            password=parsed.password,
-            sslmode='require'
+            dbname="postgres",
+            user="postgres",
+            password="Yyq@2147483648",
+            host="db.kvmvaodlznttvtfsjqpl.supabase.co",
+            port="5432",
+            sslmode="require"
         )
         conn.autocommit = False
         try:
