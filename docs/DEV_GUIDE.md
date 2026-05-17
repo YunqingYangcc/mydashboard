@@ -311,92 +311,38 @@ ngrok http 8501
 
 **部署触发**：每次 `git push` 到 main 分支，Streamlit Cloud 会自动重新部署。
 
-### 13.2 Streamlit Cloud 在线应用
+### 13.2 Streamlit Cloud 管理
 
 | 项目 | 地址 |
 |------|------|
-| 在线地址 | https://yyq-mydashboard.streamlit.app/ |
-| 状态 | 需登录 Streamlit Cloud 查看 |
-| Settings | https://share.streamlit.io/ |
+| 管理后台 | https://share.streamlit.io/ |
+| 在线应用 | https://yyq-mydashboard.streamlit.app/ |
+| 状态 | 已暂停部署 |
 
-**重要**：Streamlit Cloud 免费版使用 **Supabase PostgreSQL** 存储数据，每次 `git push` 不影响数据持久性。
+**停止部署**：登录 share.streamlit.io → 选择 app → Settings → 可暂停或删除
 
-### 13.3 Supabase 云数据库
+**重新部署**：代码推送到 GitHub 后，Streamlit Cloud 会自动检测并部署
 
-| 项目 | 值 |
-|------|---|
-| 项目 URL | https://kvmvaodlznttvtfsjqpl.supabase.co |
-| PostgreSQL Host | db.kvmvaodlznttvtfsjqpl.supabase.co |
-| PostgreSQL Port | 5432 |
-| Database | postgres |
-| 用户名 | postgres |
-| Dashboard | https://supabase.com/dashboard |
-
-**登录方式**：使用 GitHub 账号登录 Supabase
-
-**数据库连接字符串**（已配置在 Streamlit Cloud Secrets）：
-```toml
-DATABASE_URL="postgresql://postgres:Yyq@2147483648@db.kvmvaodlznttvtfsjqpl.supabase.co:5432/postgres"
-```
-
-### 13.4 数据库表结构
-
-当前在线数据库表（与 SQLite 结构兼容）：
-
-| 表名 | 用途 |
-|------|------|
-| `runs` | 运行记录 |
-| `documents` | 摄入文档 |
-| `tasks` | 任务清单 |
-| `entities` | 实体（人/事/概念） |
-| `relations` | 关系 |
-| `claims` | 断言/判断 |
-| `ai_outputs` | AI 输出日志 |
-
-**查看数据**：
-1. 登录 Supabase Dashboard
-2. 进入项目 → **Table Editor**
-3. 选择表查看数据
-
-**备份数据**：
-1. Supabase Dashboard → **SQL Editor**
-2. 执行查询导出，或使用 **Database** → **Export** 功能
-
-### 13.5 本地开发配置
+### 13.3 本地开发配置
 
 | 文件 | 说明 |
 |------|------|
 | `.env` | 本地环境变量（API Keys 等）|
 | `.streamlit/config.toml` | Streamlit 配置 |
-| `data/cognitive_os.db` | 本地 SQLite 数据库（开发用）|
 
 **本地开发启动**：
 ```bash
 streamlit run dashboard/main.py
 ```
 
-**Supabase 连接优先级**：
-- Streamlit Cloud 环境：使用 `DATABASE_URL` 环境变量（Supabase）
-- 本地环境：使用 `data/cognitive_os.db`（SQLite）
+### 13.4 数据库（本地 SQLite 分库）
 
-### 13.6 更新部署流程
+| 数据库 | 路径 | 包含表 |
+|--------|------|--------|
+| 知识库.db | `data/知识库.db` | documents, entities, relations, tasks, observations, signals 等 |
+| 认知闭环.db | `data/认知闭环.db` | claims（断言） |
+| 复盘.db | `data/复盘.db` | reviews, disciplines, plans, actions |
 
-```
-本地修改代码
-    ↓
-git add .
-    ↓
-git commit -m "描述"
-    ↓
-git push
-    ↓
-Streamlit Cloud 自动检测 → 自动部署（约2-5分钟）
-    ↓
-Supabase 数据不受影响（云数据库）
-```
+**注意**：数据库文件不提交到 GitHub（已在 .gitignore 中排除 `data/*.db`）
 
-### 13.7 注意事项
-
-1. **密码更新**：如果 Supabase 密码变更，需要同步更新 Streamlit Cloud Secrets 中的 `DATABASE_URL`
-2. **SQLite vs PostgreSQL**：本地开发用 SQLite，生产环境（Streamlit Cloud）用 PostgreSQL
-3. **免费额度**：Supabase 免费版 500MB，够个人使用
+**备份建议**：定期手动备份 `data/` 目录下的 .db 文件
