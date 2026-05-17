@@ -20,7 +20,7 @@ init_page_style()
 st.title("📥 文档导入管理")
 st.caption("将外部内容导入知识库")
 
-tab1, tab2, tab3 = st.tabs(["📁 文件夹导入", "📄 手动录入", "📋 查看文档"])
+tab1, tab2 = st.tabs(["📁 文件夹导入", "📄 手动录入"])
 
 # Tab 1: 文件夹导入
 with tab1:
@@ -70,24 +70,3 @@ with tab2:
             st.success("✅ 文档已保存！")
         else:
             st.warning("⚠️ 请填写标题和内容")
-
-# Tab 3: 查看文档
-with tab3:
-    st.subheader("知识库文档")
-    
-    docs = fetch_latest_documents(limit=100)
-    if not docs:
-        st.info("暂无文档，请先导入")
-    else:
-        st.write(f"共 {len(docs)} 个文档")
-        
-        for doc in docs[:20]:
-            with st.expander(f"📄 {doc.get('title', '无标题')}", expanded=False):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.text(doc.get("content", "")[:300] + "..." if len(doc.get("content", "")) > 300 else doc.get("content", ""))
-                with col2:
-                    meta = doc.get("metadata_json", {}) or {}
-                    st.caption(f"来源: {doc.get('source', '未知')}")
-                    st.caption(f"时间: {doc.get('created_at', '')[:10]}")
-                    st.caption(f"标签: {meta.get('tags', '无')}")
