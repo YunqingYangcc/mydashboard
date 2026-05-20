@@ -270,9 +270,43 @@ def _init_knowledge_db() -> None:
         FOREIGN KEY (document_key) REFERENCES documents(document_key)
     );
 
+    CREATE TABLE IF NOT EXISTS knowledge_signal_bindings (
+        item_key TEXT NOT NULL,
+        signal_key TEXT NOT NULL,
+        metric_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (item_key, signal_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS signal_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_date TEXT NOT NULL,
+        report_type TEXT NOT NULL,
+        content TEXT NOT NULL,
+        model TEXT,
+        signal_snapshot_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS observation_derivatives (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        metric_key TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        raw_value REAL,
+        mom_change REAL,
+        mom_pct REAL,
+        yoy_change REAL,
+        yoy_pct REAL,
+        z_score REAL,
+        is_anomaly INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        UNIQUE(metric_key, observed_at)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(hash);
     CREATE INDEX IF NOT EXISTS idx_documents_document_key ON documents(document_key);
     CREATE INDEX IF NOT EXISTS idx_quizzes_document_key ON quizzes(document_key);
+    CREATE INDEX IF NOT EXISTS idx_obs_deriv_metric ON observation_derivatives(metric_key);
     """
     with get_knowledge_db() as conn:
         conn.executescript(schema)
@@ -298,6 +332,17 @@ def _init_claims_db() -> None:
         metadata_json TEXT DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS claim_signal_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        claim_id INTEGER NOT NULL,
+        signal_key TEXT NOT NULL,
+        auto_validated INTEGER DEFAULT 0,
+        last_status TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(claim_id, signal_key)
     );
     """
     with get_claims_db() as conn:
@@ -741,8 +786,6 @@ def insert_observation(payload: dict) -> None:
         conn.execute("""
             INSERT INTO observations(metric_key, metric_name, value, unit, observed_at, frequency, source, asset, metadata_json, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(metric_key, observed_at, source) DO UPDATE SET
-                value=excluded.value, unit=excluded.unit, metadata_json=excluded.metadata_json
         """, (
             payload.get("metric_key"),
             payload.get("metric_name"),
@@ -847,6 +890,147 @@ def insert_signal_score(payload: dict) -> None:
             json_dumps(payload.get("detail", {})),
             now
         ))
+
+
+# ===== 信号系统查询（知识库.db）=====
+
+def list_signal_definitions() -> list:
+    """列出所有信号定义"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("SELECT * FROM signal_definitions ORDER BY dimension, signal_key").fetchall()
+    return rows
+
+
+def delete_signal_definition(signal_key: str) -> None:
+    """删除信号定义"""
+    with get_knowledge_db() as conn:
+        conn.execute("DELETE FROM signal_definitions WHERE signal_key = ?", (signal_key,))
+
+
+def list_recent_signal_values(limit: int = 100) -> list:
+    """查询最近的信号评估值"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("""
+            SELECT sv.*, sd.name, sd.dimension
+            FROM signal_values sv
+            JOIN signal_definitions sd ON sv.signal_key = sd.signal_key
+            ORDER BY sv.observed_at DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+    return _decode_rows(rows, ["metadata_json"])
+
+
+def list_observations_by_metric(metric_key: str, limit: int = 60) -> list:
+    """查询单个指标的历史观测值"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM observations WHERE metric_key = ? ORDER BY observed_at ASC LIMIT ?",
+            (metric_key, limit)
+        ).fetchall()
+    return _decode_rows(rows, ["metadata_json"])
+
+
+def evaluate_signals_for_metric(metric_key: str, raw_value: float, observed_at: str) -> list:
+    """根据指标值自动评估所有关联信号，返回评估结果列表"""
+    definitions = list_signal_definitions()
+    results = []
+    for sig in definitions:
+        if sig["metric_key"] != metric_key:
+            continue
+        threshold = sig["threshold"]
+        comparator = sig["comparator"]
+        # 通用评估逻辑
+        if comparator == "gt":  # 超过阈值不利
+            if raw_value > threshold:
+                status, direction, score = "negative", "up", -1
+            elif raw_value < threshold * 0.8:
+                status, direction, score = "positive", "down", 1
+            else:
+                status, direction, score = "neutral", "flat", 0
+        elif comparator == "lt":  # 低于阈值不利
+            if raw_value < threshold:
+                status, direction, score = "negative", "down", -1
+            elif raw_value > threshold * 1.2:
+                status, direction, score = "positive", "up", 1
+            else:
+                status, direction, score = "neutral", "flat", 0
+        else:
+            status, direction, score = "neutral", "flat", 0
+
+        reasoning = f"{sig['name']}: {raw_value} {'>' if comparator == 'gt' else '<'} {threshold} → {status}"
+        payload = {
+            "signal_key": sig["signal_key"],
+            "observed_at": observed_at,
+            "raw_value": raw_value,
+            "threshold": threshold,
+            "status": status,
+            "direction": direction,
+            "score": score,
+            "reasoning": reasoning,
+        }
+        insert_signal_value(payload)
+        results.append({**payload, "name": sig["name"], "dimension": sig["dimension"]})
+    return results
+
+
+def compute_daily_score(score_date: str = None) -> dict:
+    """计算每日综合评分，自动聚合所有维度的信号"""
+    from kb.utils import now_iso
+    if score_date is None:
+        score_date = now_iso()[:10]
+    # 获取当日各信号最新值
+    with get_knowledge_db() as conn:
+        rows = conn.execute("""
+            SELECT sv.*, sd.name, sd.dimension
+            FROM signal_values sv
+            JOIN signal_definitions sd ON sv.signal_key = sd.signal_key
+            WHERE sv.observed_at >= ? AND sv.observed_at < ?
+        """, (f"{score_date}T00:00:00", f"{score_date}T23:59:59")).fetchall()
+    rows = _decode_rows(rows, ["metadata_json"])
+    if not rows:
+        return None
+    # 按信号取最新值
+    latest = {}
+    for r in rows:
+        key = r["signal_key"]
+        if key not in latest or r["observed_at"] > latest[key]["observed_at"]:
+            latest[key] = r
+    values = list(latest.values())
+    positive_count = sum(1 for v in values if v.get("status") == "positive")
+    negative_count = sum(1 for v in values if v.get("status") == "negative")
+    neutral_count = sum(1 for v in values if v.get("status") == "neutral")
+    total_score = positive_count - negative_count
+    # 维度分解
+    dim_breakdown = {}
+    for v in values:
+        dim = v.get("dimension", "未分类")
+        if dim not in dim_breakdown:
+            dim_breakdown[dim] = {"positive": 0, "negative": 0, "neutral": 0}
+        st = v.get("status", "neutral")
+        dim_breakdown[dim][st] = dim_breakdown[dim].get(st, 0) + 1
+    # 动作建议
+    if total_score >= 3:
+        action = "strong_buy"
+    elif total_score >= 1:
+        action = "buy"
+    elif total_score <= -3:
+        action = "strong_sell"
+    elif total_score <= -1:
+        action = "sell"
+    else:
+        action = "hold"
+    payload = {
+        "score_date": score_date,
+        "positive_count": positive_count,
+        "negative_count": negative_count,
+        "neutral_count": neutral_count,
+        "total_score": total_score,
+        "action_suggestion": action,
+        "dimension_breakdown": dim_breakdown,
+        "detail": {v["signal_key"]: {"status": v.get("status"), "score": v.get("score", 0)} for v in values},
+    }
+    insert_signal_score(payload)
+    return payload
 
 
 # ===== AI输出（知识库.db）=====
@@ -1221,3 +1405,254 @@ def clear_progress_logs() -> None:
     """清空所有进度记录"""
     with get_review_db() as conn:
         conn.execute("DELETE FROM progress_logs")
+
+
+# ===== 知识-信号绑定（知识库.db）=====
+
+def bind_signal_to_knowledge(item_key: str, signal_key: str, metric_key: str) -> None:
+    """绑定信号到知识点"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        conn.execute("""
+            INSERT OR IGNORE INTO knowledge_signal_bindings(item_key, signal_key, metric_key, created_at)
+            VALUES (?, ?, ?, ?)
+        """, (item_key, signal_key, metric_key, now))
+
+
+def unbind_signal_from_knowledge(item_key: str, signal_key: str) -> None:
+    """解绑信号与知识点"""
+    with get_knowledge_db() as conn:
+        conn.execute("DELETE FROM knowledge_signal_bindings WHERE item_key = ? AND signal_key = ?",
+                     (item_key, signal_key))
+
+
+def get_knowledge_signal_bindings(item_key: str = None) -> list:
+    """获取知识点关联的信号绑定"""
+    with get_knowledge_db() as conn:
+        if item_key:
+            rows = conn.execute(
+                "SELECT * FROM knowledge_signal_bindings WHERE item_key = ?", (item_key,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM knowledge_signal_bindings").fetchall()
+    return rows
+
+
+def get_knowledge_signal_status(item_key: str) -> list:
+    """获取知识点的信号状态（含最新信号值）"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("""
+            SELECT b.item_key, b.signal_key, b.metric_key,
+                   sd.name, sd.dimension, sd.comparator, sd.threshold,
+                   sv.raw_value, sv.status, sv.direction, sv.reasoning, sv.observed_at
+            FROM knowledge_signal_bindings b
+            JOIN signal_definitions sd ON b.signal_key = sd.signal_key
+            LEFT JOIN (
+                SELECT signal_key, raw_value, status, direction, reasoning, observed_at,
+                       ROW_NUMBER() OVER (PARTITION BY signal_key ORDER BY observed_at DESC) AS rn
+                FROM signal_values
+            ) sv ON b.signal_key = sv.signal_key AND sv.rn = 1
+            WHERE b.item_key = ?
+        """, (item_key,)).fetchall()
+    return rows
+
+
+# ===== 信号报告（知识库.db）=====
+
+def insert_signal_report(report_date: str, report_type: str, content: str,
+                         model: str = None, snapshot: dict = None) -> None:
+    """保存信号报告"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        conn.execute("""
+            INSERT INTO signal_reports(report_date, report_type, content, model, signal_snapshot_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (report_date, report_type, content, model, json_dumps(snapshot or {}), now))
+
+
+def list_signal_reports(report_type: str = None, limit: int = 10) -> list:
+    """查询信号报告"""
+    with get_knowledge_db() as conn:
+        if report_type:
+            rows = conn.execute(
+                "SELECT * FROM signal_reports WHERE report_type = ? ORDER BY created_at DESC LIMIT ?",
+                (report_type, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM signal_reports ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+    return _decode_rows(rows, ["signal_snapshot_json"])
+
+
+# ===== 观测衍生计算（知识库.db）=====
+
+def compute_observation_derivatives(metric_key: str, observed_at: str, raw_value: float) -> dict:
+    """计算观测值的环比/同比/异常检测，独立落库"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        # 获取前一条记录（环比）
+        prev_row = conn.execute(
+            "SELECT value, observed_at FROM observations WHERE metric_key = ? AND observed_at < ? ORDER BY observed_at DESC LIMIT 1",
+            (metric_key, observed_at)
+        ).fetchone()
+
+        # 获取去年同期（同比）
+        year_ago = observed_at[:4] + str(int(observed_at[4:6]) - 12 + 12).zfill(2) if len(observed_at) >= 6 else None
+        yoy_row = None
+        if year_ago:
+            yoy_row = conn.execute(
+                "SELECT value FROM observations WHERE metric_key = ? AND observed_at >= ? AND observed_at < ? ORDER BY observed_at ASC LIMIT 1",
+                (metric_key, year_ago, observed_at[:4] + observed_at[4:])
+            ).fetchone()
+
+        # 获取最近30个值算 z-score
+        recent_rows = conn.execute(
+            "SELECT value FROM observations WHERE metric_key = ? ORDER BY observed_at DESC LIMIT 30",
+            (metric_key,)
+        ).fetchall()
+
+    mom_change = None
+    mom_pct = None
+    yoy_change = None
+    yoy_pct = None
+    z_score = None
+    is_anomaly = 0
+
+    if prev_row and prev_row["value"] is not None:
+        mom_change = raw_value - prev_row["value"]
+        mom_pct = mom_change / abs(prev_row["value"]) * 100 if prev_row["value"] != 0 else None
+
+    if yoy_row and yoy_row["value"] is not None:
+        yoy_change = raw_value - yoy_row["value"]
+        yoy_pct = yoy_change / abs(yoy_row["value"]) * 100 if yoy_row["value"] != 0 else None
+
+    if len(recent_rows) >= 5:
+        values = [r["value"] for r in recent_rows if r["value"] is not None]
+        if len(values) >= 5:
+            import statistics
+            mean = statistics.mean(values)
+            std = statistics.stdev(values)
+            if std > 0:
+                z_score = (raw_value - mean) / std
+                is_anomaly = 1 if abs(z_score) > 2 else 0
+
+    result = {
+        "metric_key": metric_key,
+        "observed_at": observed_at,
+        "raw_value": raw_value,
+        "mom_change": mom_change,
+        "mom_pct": mom_pct,
+        "yoy_change": yoy_change,
+        "yoy_pct": yoy_pct,
+        "z_score": z_score,
+        "is_anomaly": is_anomaly,
+    }
+
+    with get_knowledge_db() as conn:
+        conn.execute("""
+            INSERT INTO observation_derivatives(metric_key, observed_at, raw_value, mom_change, mom_pct, yoy_change, yoy_pct, z_score, is_anomaly, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(metric_key, observed_at) DO UPDATE SET
+                raw_value=excluded.raw_value, mom_change=excluded.mom_change, mom_pct=excluded.mom_pct,
+                yoy_change=excluded.yoy_change, yoy_pct=excluded.yoy_pct, z_score=excluded.z_score, is_anomaly=excluded.is_anomaly
+        """, (metric_key, observed_at, raw_value, mom_change, mom_pct, yoy_change, yoy_pct, z_score, is_anomaly, now))
+
+    return result
+
+
+def list_derivatives_for_metric(metric_key: str, limit: int = 30) -> list:
+    """查询指标的衍生计算结果"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM observation_derivatives WHERE metric_key = ? ORDER BY observed_at DESC LIMIT ?",
+            (metric_key, limit)
+        ).fetchall()
+    return rows
+
+
+def list_anomaly_observations(limit: int = 20) -> list:
+    """查询异常观测值"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM observation_derivatives WHERE is_anomaly = 1 ORDER BY observed_at DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+    return rows
+
+
+# ===== 断言-信号关联（认知闭环.db）=====
+
+def link_claim_to_signal(claim_id: int, signal_key: str) -> None:
+    """关联断言与信号"""
+    now = now_iso()
+    with get_claims_db() as conn:
+        conn.execute("""
+            INSERT OR IGNORE INTO claim_signal_links(claim_id, signal_key, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+        """, (claim_id, signal_key, now, now))
+
+
+def unlink_claim_from_signal(claim_id: int, signal_key: str) -> None:
+    """取消断言与信号的关联"""
+    with get_claims_db() as conn:
+        conn.execute("DELETE FROM claim_signal_links WHERE claim_id = ? AND signal_key = ?",
+                     (claim_id, signal_key))
+
+
+def get_claims_for_signal(signal_key: str) -> list:
+    """获取信号关联的断言"""
+    with get_claims_db() as conn:
+        rows = conn.execute("""
+            SELECT c.*, csl.last_status, csl.auto_validated
+            FROM claim_signal_links csl
+            JOIN claims c ON csl.claim_id = c.id
+            WHERE csl.signal_key = ?
+            ORDER BY c.updated_at DESC
+        """, (signal_key,)).fetchall()
+    return _decode_rows(rows, ["metadata_json"])
+
+
+def get_signals_for_claim(claim_id: int) -> list:
+    """获取断言关联的信号"""
+    with get_claims_db() as conn:
+        rows = conn.execute("""
+            SELECT csl.claim_id, csl.signal_key, csl.last_status, csl.auto_validated, csl.created_at
+            FROM claim_signal_links csl
+            WHERE csl.claim_id = ?
+        """, (claim_id,)).fetchall()
+    # 补充信号定义信息
+    if rows:
+        sig_keys = [r["signal_key"] for r in rows]
+        sig_def_map = {}
+        for s in list_signal_definitions():
+            if s["signal_key"] in sig_keys:
+                sig_def_map[s["signal_key"]] = s
+        result = []
+        for r in rows:
+            sd = sig_def_map.get(r["signal_key"], {})
+            result.append({**r, "name": sd.get("name", ""), "dimension": sd.get("dimension", ""), "threshold": sd.get("threshold")})
+        return result
+    return []
+
+
+def update_claim_signal_status(claim_id: int, signal_key: str, status: str, auto_validated: bool = False) -> None:
+    """更新断言-信号关联状态"""
+    now = now_iso()
+    with get_claims_db() as conn:
+        conn.execute("""
+            UPDATE claim_signal_links SET last_status = ?, auto_validated = ?, updated_at = ?
+            WHERE claim_id = ? AND signal_key = ?
+        """, (status, int(auto_validated), now, claim_id, signal_key))
+
+
+def check_claims_for_signal_change(signal_key: str, new_status: str) -> list:
+    """信号状态变化时，检查关联断言是否需要重新验证，返回待验证断言列表"""
+    claims = get_claims_for_signal(signal_key)
+    pending = []
+    for claim in claims:
+        # 只对未验证或状态变化了的断言提醒
+        if claim.get("verification_status") != "validated" or claim.get("last_status") != new_status:
+            update_claim_signal_status(claim["id"], signal_key, new_status)
+            pending.append(claim)
+    return pending

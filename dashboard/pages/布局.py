@@ -18,6 +18,11 @@ from kb.storage import (
     reset_knowledge_progress,
     unlink_document_from_knowledge,
     upsert_knowledge_item,
+    bind_signal_to_knowledge,
+    unbind_signal_from_knowledge,
+    get_knowledge_signal_bindings,
+    get_knowledge_signal_status,
+    list_signal_definitions,
 )
 
 init_db()
@@ -535,6 +540,20 @@ def render_category_with_docs(layer: str, category: str, info: dict, learned_ite
         if info.get("companies"):
             st.caption(f"🏢 {info['companies']}")
         
+        # 知识点关联信号状态
+        bindings = signal_bindings_map.get(item_key, [])
+        if bindings:
+            sig_statuses = get_knowledge_signal_status(item_key)
+            if sig_statuses:
+                status_parts = []
+                for ss in sig_statuses:
+                    icon_map = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}
+                    icon = icon_map.get(ss.get("status"), "⚪")
+                    val = ss.get("raw_value")
+                    name = ss.get("name", ss.get("signal_key", ""))
+                    status_parts.append(f"{icon}{name}:{val}" if val is not None else f"⚪{name}")
+                st.caption("🚦 " + " · ".join(status_parts))
+        
         # 关联文档列表
         if linked_docs:
             for doc in linked_docs:
@@ -618,6 +637,20 @@ def render_category_with_docs(layer: str, category: str, info: dict, learned_ite
                     if child_info.get("companies"):
                         st.caption(f"   🏢 {child_info['companies']}")
                 
+                # 子知识点信号状态
+                child_bindings = signal_bindings_map.get(child_key, [])
+                if child_bindings:
+                    child_sig_statuses = get_knowledge_signal_status(child_key)
+                    if child_sig_statuses:
+                        child_status_parts = []
+                        for ss in child_sig_statuses:
+                            icon_map = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}
+                            icon = icon_map.get(ss.get("status"), "⚪")
+                            val = ss.get("raw_value")
+                            name = ss.get("name", ss.get("signal_key", ""))
+                            child_status_parts.append(f"{icon}{name}:{val}" if val is not None else f"⚪{name}")
+                        st.caption(f"   🚦 " + " · ".join(child_status_parts))
+                
                 # 显示子项关联的断言
                 for claim in child_claim_list:
                     status_icon = {"validated": "✅", "invalidated": "❌", "pending": "⏳"}.get(claim.get("verification_status", "pending"), "⏳")
@@ -632,6 +665,16 @@ starred_docs = [d for d in all_docs if (d.get("metadata_json") or {}).get("starr
 
 # 获取知识点-文档关联数据
 doc_links = get_all_knowledge_doc_links()
+
+# 获取知识点-信号绑定数据，按 item_key 分组
+all_bindings = get_knowledge_signal_bindings()
+signal_bindings_map = {}
+for b in all_bindings:
+    key = b["item_key"]
+    signal_bindings_map.setdefault(key, []).append(b)
+
+# 所有信号定义，供绑定用
+all_signal_defs = list_signal_definitions()
 
 # ===== 章节名映射：KNOWLEDGE_TREE 分类名 → claims.chapter =====
 # 知识点 key 格式: "P0 基础设施层|💻 AI芯片"，需映射到 chapter 如 "P0-基础设施/AI芯片"
@@ -813,4 +856,56 @@ ASML DUV(非EUV) → 中芯国际7nm(良率50%) → 华为昇腾910B/950
 ```
 **关键节点**：EUV光刻机无法获得=先进制程被锁死=训练芯片性能差2-3代，但推理和端侧可以绕开
 """)
+
+# ===== 信号绑定 =====
+st.divider()
+with st.expander("🚦 知识点-信号绑定", expanded=False):
+    st.markdown("将信号绑定到知识点，在学习时直接看到市场验证状态")
+
+    # 构建知识点选项
+    knowledge_items = []
+    for section, categories in KNOWLEDGE_TREE.items():
+        for category, info in categories.items():
+            if category == "intro":
+                continue
+            item_key = f"{section}|{category}"
+            knowledge_items.append((item_key, f"{section} > {category}"))
+            if isinstance(info, dict) and "children" in info:
+                for child in info.get("children", {}):
+                    child_key = f"{section}|{category}|{child}"
+                    knowledge_items.append((child_key, f"{section} > {category} > {child}"))
+
+    if knowledge_items and all_signal_defs:
+        col_k, col_s = st.columns(2)
+        with col_k:
+            ki_options = {ki[1]: ki[0] for ki in knowledge_items}
+            selected_ki = st.selectbox("选择知识点", list(ki_options.keys()), key="bind_ki")
+        with col_s:
+            sd_options = {f"{s['signal_key']} - {s['name']}": s for s in all_signal_defs}
+            selected_sd = st.selectbox("选择信号", list(sd_options.keys()), key="bind_sd")
+
+        if st.button("🔗 绑定信号到知识点"):
+            item_key = ki_options[selected_ki]
+            signal_key = sd_options[selected_sd]["signal_key"]
+            metric_key = sd_options[selected_sd]["metric_key"]
+            bind_signal_to_knowledge(item_key, signal_key, metric_key)
+            st.success(f"✅ 已绑定 {signal_key} → {selected_ki}")
+            st.rerun()
+
+        # 显示已有绑定
+        st.divider()
+        st.markdown("**已有绑定**")
+        for ki_name, ki_key in ki_options.items():
+            bindings = signal_bindings_map.get(ki_key, [])
+            if bindings:
+                for b in bindings:
+                    col1, col2 = st.columns([5, 1])
+                    with col1:
+                        st.caption(f"  🚦 {ki_name[:30]} ↔ {b['signal_key']}")
+                    with col2:
+                        if st.button("❌", key=f"unbind_{ki_key[:10]}_{b['signal_key']}", help="取消绑定"):
+                            unbind_signal_from_knowledge(ki_key, b["signal_key"])
+                            st.rerun()
+    else:
+        st.info("需要先有信号定义才能绑定")
 

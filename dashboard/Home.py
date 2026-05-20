@@ -73,13 +73,11 @@ with entry_col5:
 with entry_col6:
     st.page_link("pages/文档导入管理.py", label="📥 文档导入", icon="📥")
 
-st.divider()
-st.subheader("📍 进度跟踪")
-progress_col1, progress_col2 = st.columns(2)
-with progress_col1:
+entry_col7, entry_col8 = st.columns(2)
+with entry_col7:
+    st.page_link("pages/信号仪表盘.py", label="🚦 信号仪表盘", icon="🚦")
+with entry_col8:
     st.page_link("pages/进度跟踪.py", label="📍 进度跟踪", icon="📍")
-with progress_col2:
-    st.caption("记录学习/工作进度")
 
 # 签名
 with st.sidebar:

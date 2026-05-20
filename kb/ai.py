@@ -23,6 +23,12 @@ from kb.storage import (
     insert_ai_output,
     insert_run,
     get_connection,
+    list_signal_definitions,
+    list_recent_signal_values,
+    latest_signal_score,
+    list_anomaly_observations,
+    insert_signal_report,
+    check_claims_for_signal_change,
 )
 from kb.utils import now_iso
 
@@ -205,3 +211,94 @@ def run_document_update_workflow(doc_id: str, title: str, content: str, provider
     except Exception as exc:
         finish_run(run_id, "failed", {"error": str(exc)})
         raise
+
+
+SIGNAL_REPORT_PROMPT = """
+你是资深的美股半导体/AI行业投研分析师。请根据以下信号数据，生成一份简洁有力的分析报告。
+
+## 当前信号状态
+{signal_status}
+
+## 综合评分
+{score_info}
+
+## 异常数据
+{anomalies}
+
+## 要求
+1. 用 Markdown 格式输出
+2. 第一部分：核心结论（1-2句话）
+3. 第二部分：各维度信号解读（估值/需求/基本面/宏观/情绪）
+4. 第三部分：信号间的因果链分析（哪些信号相互关联、传导路径）
+5. 第四部分：行动建议（具体的观察重点和操作方向）
+6. 语言简洁，避免废话，直接给判断
+""".strip()
+
+
+def generate_signal_report(provider: str = "gold") -> dict:
+    """生成信号分析报告"""
+    # 收集数据
+    signal_defs = list_signal_definitions()
+    recent_values = list_recent_signal_values(limit=200)
+    score = latest_signal_score()
+    anomalies = list_anomaly_observations(limit=10)
+
+    # 按维度分组信号状态
+    dim_status = {}
+    for sig in signal_defs:
+        dim = sig["dimension"]
+        if dim not in dim_status:
+            dim_status[dim] = []
+        # 找最新值
+        latest_sv = None
+        for sv in recent_values:
+            if sv["signal_key"] == sig["signal_key"]:
+                latest_sv = sv
+                break
+        entry = f"{sig['name']}: {latest_sv.get('raw_value', 'N/A') if latest_sv else 'N/A'} → {latest_sv.get('status', '无数据') if latest_sv else '无数据'}"
+        if latest_sv and latest_sv.get("reasoning"):
+            entry += f"（{latest_sv['reasoning']}）"
+        dim_status[dim].append(entry)
+
+    signal_status_text = ""
+    for dim, items in dim_status.items():
+        signal_status_text += f"### {dim}\n"
+        for item in items:
+            signal_status_text += f"- {item}\n"
+        signal_status_text += "\n"
+
+    score_text = "暂无评分"
+    if score:
+        score_text = f"综合得分: {score.get('total_score', 0)}, 动作建议: {score.get('action_suggestion', 'hold')}"
+
+    anomaly_text = "无异常数据"
+    if anomalies:
+        anomaly_text = "\n".join(
+            [f"- {a['metric_key']}: 值={a['raw_value']}, z-score={a.get('z_score', 'N/A')}" for a in anomalies]
+        )
+
+    prompt = SIGNAL_REPORT_PROMPT.format(
+        signal_status=signal_status_text,
+        score_info=score_text,
+        anomalies=anomaly_text,
+    )
+
+    content, meta, cfg = _ask_text(prompt, provider)
+    used_fallback = bool(meta.get("used_fallback"))
+
+    if not used_fallback and content:
+        from kb.utils import now_iso
+        insert_signal_report(
+            report_date=now_iso()[:10],
+            report_type="ai_weekly",
+            content=content,
+            model=cfg.get("model", ""),
+            snapshot={"total_score": score.get("total_score") if score else None},
+        )
+
+    return {
+        "content": content,
+        "used_fallback": used_fallback,
+        "model": cfg.get("model", ""),
+        "reason": meta.get("reason", ""),
+    }
