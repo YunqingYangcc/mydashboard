@@ -566,7 +566,7 @@ def render_category_with_docs(layer: str, category: str, info: dict, learned_ite
                         icon="📄"
                     )
                 with col_del:
-                    if st.button("❌", key=f"del_{doc_id}_{item_key[:10]}", help="取消关联"):
+                    if st.button("❌", key=f"del_{doc_id}_{item_key}", help="取消关联"):
                         unlink_document_from_knowledge(item_key, doc_id)
                         st.rerun()
         
@@ -586,7 +586,7 @@ def render_category_with_docs(layer: str, category: str, info: dict, learned_ite
                 already_linked = any(d["id"] == doc_id for d in linked_docs)
                 if st.button(
                     f"{'✅' if already_linked else '➕'} {doc.get('title', '未命名')[:25]}",
-                    key=f"link_{doc_id}_{item_key[:10]}",
+                    key=f"link_{doc_id}_{item_key}",
                     use_container_width=True
                 ):
                     if already_linked:

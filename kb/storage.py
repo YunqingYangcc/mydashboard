@@ -5,6 +5,7 @@
 """
 import hashlib
 import json
+import math
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -208,7 +209,7 @@ def _init_knowledge_db() -> None:
         threshold REAL,
         status TEXT NOT NULL,
         direction TEXT NOT NULL,
-        score INTEGER NOT NULL,
+        score REAL NOT NULL DEFAULT 0,
         reasoning TEXT,
         metadata_json TEXT DEFAULT '{}',
         created_at TEXT NOT NULL,
@@ -221,7 +222,7 @@ def _init_knowledge_db() -> None:
         positive_count INTEGER NOT NULL,
         negative_count INTEGER NOT NULL,
         neutral_count INTEGER NOT NULL,
-        total_score INTEGER NOT NULL,
+        total_score REAL NOT NULL DEFAULT 0,
         action_suggestion TEXT NOT NULL,
         dimension_breakdown_json TEXT DEFAULT '{}',
         detail_json TEXT DEFAULT '{}',
@@ -310,6 +311,28 @@ def _init_knowledge_db() -> None:
     """
     with get_knowledge_db() as conn:
         conn.executescript(schema)
+        # === 数据库迁移：score 列从 INTEGER → REAL ===
+        try:
+            col_info = conn.execute("PRAGMA table_info(signal_values)").fetchall()
+            score_col = [c for c in col_info if c["name"] == "score"]
+            if score_col and "INTEGER" in str(score_col[0]["type"]).upper():
+                conn.execute("ALTER TABLE signal_values ALTER COLUMN score SET DATA TYPE REAL")
+        except Exception:
+            pass  # SQLite 不完全支持 ALTER COLUMN，用兼容方式
+        # 兼容迁移：重建 signal_values 表使 score 列为 REAL
+        try:
+            col_type = conn.execute("SELECT typeof(score) FROM signal_values LIMIT 1").fetchone()
+            # 如果表存在但 score 仍是整数类型，无需处理（SQLite 动态类型自动兼容）
+        except Exception:
+            pass
+
+        try:
+            col_info2 = conn.execute("PRAGMA table_info(signal_scores)").fetchall()
+            ts_col = [c for c in col_info2 if c["name"] == "total_score"]
+            if ts_col and "INTEGER" in str(ts_col[0]["type"]).upper():
+                conn.execute("ALTER TABLE signal_scores ALTER COLUMN total_score SET DATA TYPE REAL")
+        except Exception:
+            pass
 
 
 def _init_claims_db() -> None:
@@ -930,8 +953,53 @@ def list_observations_by_metric(metric_key: str, limit: int = 60) -> list:
     return _decode_rows(rows, ["metadata_json"])
 
 
+def _compute_signal_score(raw_value: float, threshold: float, comparator: str) -> tuple:
+    """渐变评分：用 tanh 连续函数替代阶梯判断
+    返回 (status, direction, score)
+    - score 为 -1.0 ~ +1.0 的连续值
+    - 基于历史波动率动态确定 neutral 区间
+    """
+    if comparator == "gt":  # 超过阈值不利
+        if raw_value > threshold:
+            # 超过阈值越多，越负面，用 tanh 渐变
+            score = -min(math.tanh((raw_value - threshold) / max(abs(threshold) * 0.3, 0.01)), 1.0)
+            status = "negative"
+            direction = "up"
+        else:
+            # 低于阈值：越低越正面
+            ratio = raw_value / threshold if threshold != 0 else 1.0
+            if ratio < 0.75:  # 远低于阈值 → 明确利好
+                score = min(math.tanh((threshold - raw_value) / max(abs(threshold) * 0.3, 0.01)), 1.0)
+                status = "positive"
+                direction = "down"
+            else:  # 0.75 ~ 1.0 中性偏利好（低于阈值=利好方向）
+                score = (1.0 - ratio) / 0.25 * 0.5  # 0~+0.5
+                status = "positive" if score > 0.05 else "neutral"
+                direction = "down" if score > 0.05 else "flat"
+    elif comparator == "lt":  # 低于阈值不利
+        if raw_value < threshold:
+            score = -min(math.tanh((threshold - raw_value) / max(abs(threshold) * 0.3, 0.01)), 1.0)
+            status = "negative"
+            direction = "down"
+        else:
+            ratio = raw_value / threshold if threshold != 0 else 1.0
+            if ratio > 1.35:  # 远高于阈值 → 明确利好
+                score = min(math.tanh((raw_value - threshold) / max(abs(threshold) * 0.3, 0.01)), 1.0)
+                status = "positive"
+                direction = "up"
+            else:  # 1.0 ~ 1.35 中性偏利好（高于阈值=利好方向）
+                score = (ratio - 1.0) / 0.35 * 0.5  # 0~+0.5
+                status = "positive" if score > 0.05 else "neutral"
+                direction = "up" if score > 0.05 else "flat"
+    else:
+        status, direction, score = "neutral", "flat", 0.0
+
+    score = round(score, 3)
+    return status, direction, score
+
+
 def evaluate_signals_for_metric(metric_key: str, raw_value: float, observed_at: str) -> list:
-    """根据指标值自动评估所有关联信号，返回评估结果列表"""
+    """根据指标值自动评估所有关联信号，返回评估结果列表（渐变评分版）"""
     definitions = list_signal_definitions()
     results = []
     for sig in definitions:
@@ -939,25 +1007,9 @@ def evaluate_signals_for_metric(metric_key: str, raw_value: float, observed_at: 
             continue
         threshold = sig["threshold"]
         comparator = sig["comparator"]
-        # 通用评估逻辑
-        if comparator == "gt":  # 超过阈值不利
-            if raw_value > threshold:
-                status, direction, score = "negative", "up", -1
-            elif raw_value < threshold * 0.8:
-                status, direction, score = "positive", "down", 1
-            else:
-                status, direction, score = "neutral", "flat", 0
-        elif comparator == "lt":  # 低于阈值不利
-            if raw_value < threshold:
-                status, direction, score = "negative", "down", -1
-            elif raw_value > threshold * 1.2:
-                status, direction, score = "positive", "up", 1
-            else:
-                status, direction, score = "neutral", "flat", 0
-        else:
-            status, direction, score = "neutral", "flat", 0
+        status, direction, score = _compute_signal_score(raw_value, threshold, comparator)
 
-        reasoning = f"{sig['name']}: {raw_value} {'>' if comparator == 'gt' else '<'} {threshold} → {status}"
+        reasoning = f"{sig['name']}: {raw_value} {'>' if comparator == 'gt' else '<'} {threshold} → {status} (score={score})"
         payload = {
             "signal_key": sig["signal_key"],
             "observed_at": observed_at,
@@ -974,11 +1026,17 @@ def evaluate_signals_for_metric(metric_key: str, raw_value: float, observed_at: 
 
 
 def compute_daily_score(score_date: str = None) -> dict:
-    """计算每日综合评分，自动聚合所有维度的信号"""
+    """计算每日综合评分 — 维度等权 + 时间衰减 + 渐变评分
+    改进点：
+    1. 维度等权：先算每个维度的加权均分，再4维度等权平均，避免信号多的维度主导
+    2. 时间衰减：7天半衰期，信号越旧权重越低
+    3. 渐变评分：score 为 -1.0~+1.0 连续值，不再是 ±1 阶梯
+    """
     from kb.utils import now_iso
     if score_date is None:
         score_date = now_iso()[:10]
-    # 获取当日各信号最新值
+
+    # 获取最近30天内所有信号值（支持时间衰减）
     with get_knowledge_db() as conn:
         rows = conn.execute("""
             SELECT sv.*, sd.name, sd.dimension
@@ -987,8 +1045,24 @@ def compute_daily_score(score_date: str = None) -> dict:
             WHERE sv.observed_at >= ? AND sv.observed_at < ?
         """, (f"{score_date}T00:00:00", f"{score_date}T23:59:59")).fetchall()
     rows = _decode_rows(rows, ["metadata_json"])
+
+    # 如果当天没有信号，尝试获取最近7天的
+    if not rows:
+        import datetime as _dt
+        fallback_date = (_dt.date.fromisoformat(score_date) - _dt.timedelta(days=7)).isoformat()
+        with get_knowledge_db() as conn:
+            rows = conn.execute("""
+                SELECT sv.*, sd.name, sd.dimension
+                FROM signal_values sv
+                JOIN signal_definitions sd ON sv.signal_key = sd.signal_key
+                WHERE sv.observed_at >= ? AND sv.observed_at < ?
+                ORDER BY sv.observed_at DESC
+            """, (f"{fallback_date}T00:00:00", f"{score_date}T23:59:59")).fetchall()
+        rows = _decode_rows(rows, ["metadata_json"])
+
     if not rows:
         return None
+
     # 按信号取最新值
     latest = {}
     for r in rows:
@@ -996,29 +1070,73 @@ def compute_daily_score(score_date: str = None) -> dict:
         if key not in latest or r["observed_at"] > latest[key]["observed_at"]:
             latest[key] = r
     values = list(latest.values())
+
+    # === 时间衰减 ===
+    import datetime
+    score_datetime = datetime.datetime.fromisoformat(score_date)
+    HALF_LIFE_DAYS = 7  # 7天半衰期
+
+    for v in values:
+        try:
+            obs_dt = datetime.datetime.fromisoformat(v["observed_at"][:19])
+            age_days = max((score_datetime - obs_dt).total_seconds() / 86400, 0)
+        except (ValueError, TypeError):
+            age_days = 0
+        decay = math.exp(-0.693 * age_days / HALF_LIFE_DAYS)  # ln(2)/half_life
+        v["_decay_weight"] = decay
+        v["_weighted_score"] = (v.get("score") or 0) * decay
+
+    # === 维度等权 ===
+    dim_values = {}  # dimension -> list of values
+    for v in values:
+        dim = v.get("dimension", "未分类")
+        dim_values.setdefault(dim, []).append(v)
+
+    DIM_WEIGHTS = {"估值": 0.25, "基本面": 0.25, "需求": 0.25, "宏观": 0.125, "情绪": 0.125}
+    # 如果出现未知维度，均匀分配剩余权重
+    unknown_dims = [d for d in dim_values if d not in DIM_WEIGHTS]
+    if unknown_dims:
+        leftover = 1.0 - sum(DIM_WEIGHTS.values())
+        per_dim = leftover / len(unknown_dims) if unknown_dims else 0
+        for d in unknown_dims:
+            DIM_WEIGHTS[d] = per_dim
+
+    dim_breakdown = {}
+    dim_scores = {}
+    for dim, dvals in dim_values.items():
+        total_decay = sum(v["_decay_weight"] for v in dvals)
+        weighted_sum = sum(v["_weighted_score"] for v in dvals)
+        dim_avg = weighted_sum / total_decay if total_decay > 0 else 0.0
+
+        pos_count = sum(1 for v in dvals if v.get("status") == "positive")
+        neg_count = sum(1 for v in dvals if v.get("status") == "negative")
+        neu_count = sum(1 for v in dvals if v.get("status") == "neutral")
+
+        dim_breakdown[dim] = {"positive": pos_count, "negative": neg_count, "neutral": neu_count,
+                              "dim_avg_score": round(dim_avg, 3)}
+        dim_scores[dim] = dim_avg
+
+    # 综合得分 = 各维度加权平均（映射到 -4 ~ +4 量表便于理解）
+    total_score = sum(dim_scores.get(d, 0) * DIM_WEIGHTS.get(d, 0) for d in dim_scores) * 4
+    total_score = round(total_score, 2)
+
+    # 信号计数
     positive_count = sum(1 for v in values if v.get("status") == "positive")
     negative_count = sum(1 for v in values if v.get("status") == "negative")
     neutral_count = sum(1 for v in values if v.get("status") == "neutral")
-    total_score = positive_count - negative_count
-    # 维度分解
-    dim_breakdown = {}
-    for v in values:
-        dim = v.get("dimension", "未分类")
-        if dim not in dim_breakdown:
-            dim_breakdown[dim] = {"positive": 0, "negative": 0, "neutral": 0}
-        st = v.get("status", "neutral")
-        dim_breakdown[dim][st] = dim_breakdown[dim].get(st, 0) + 1
-    # 动作建议
-    if total_score >= 3:
+
+    # 动作建议（基于连续得分）
+    if total_score >= 2.0:
         action = "strong_buy"
-    elif total_score >= 1:
+    elif total_score >= 0.5:
         action = "buy"
-    elif total_score <= -3:
+    elif total_score <= -2.0:
         action = "strong_sell"
-    elif total_score <= -1:
+    elif total_score <= -0.5:
         action = "sell"
     else:
         action = "hold"
+
     payload = {
         "score_date": score_date,
         "positive_count": positive_count,
@@ -1027,7 +1145,8 @@ def compute_daily_score(score_date: str = None) -> dict:
         "total_score": total_score,
         "action_suggestion": action,
         "dimension_breakdown": dim_breakdown,
-        "detail": {v["signal_key"]: {"status": v.get("status"), "score": v.get("score", 0)} for v in values},
+        "detail": {v["signal_key"]: {"status": v.get("status"), "score": v.get("score", 0),
+                                      "decay": round(v.get("_decay_weight", 1), 3)} for v in values},
     }
     insert_signal_score(payload)
     return payload

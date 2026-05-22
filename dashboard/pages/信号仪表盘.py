@@ -76,7 +76,7 @@ if latest_score:
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         score_color = "🟢" if total > 0 else ("🔴" if total < 0 else "🟡")
-        metric_card(f"{score_color} 综合得分", total, score_date)
+        metric_card(f"{score_color} 综合得分", f"{total:+.2f}", score_date)
     with col2:
         metric_card("🟢 利好", pos, "信号数")
     with col3:
@@ -94,13 +94,15 @@ if latest_score:
         except Exception:
             dim_breakdown = {}
     if dim_breakdown:
-        dim_cols = st.columns(min(len(dim_breakdown), 4))
+        dim_cols = st.columns(min(len(dim_breakdown), 5))
         for idx, (dim, stats) in enumerate(dim_breakdown.items()):
             with dim_cols[idx % len(dim_cols)]:
                 d_pos = stats.get("positive", 0)
                 d_neg = stats.get("negative", 0)
                 d_neu = stats.get("neutral", 0)
-                st.caption(f"**{dim}**  🟢{d_pos} 🟡{d_neu} 🔴{d_neg}")
+                d_avg = stats.get("dim_avg_score", 0)
+                dim_color = "🟢" if d_avg > 0 else ("🔴" if d_avg < 0 else "🟡")
+                st.caption(f"**{dim}** {dim_color}{d_avg:+.2f}  🟢{d_pos} 🟡{d_neu} 🔴{d_neg}")
 else:
     st.info("暂无评分数据，录入指标后点击「计算评分」生成")
 
@@ -130,11 +132,13 @@ else:
                     raw = sv.get("raw_value", "-")
                     thr = sv.get("threshold", "-")
                     comp = ">" if sig["comparator"] == "gt" else "<"
+                    score = sv.get("score", 0)
+                    score_str = f"{score:+.2f}" if isinstance(score, float) else str(score)
                     st.markdown(
                         f"<div style='border:1px solid rgba(120,120,140,0.18);border-radius:12px;padding:10px 12px;margin-bottom:8px;'>"
                         f"<div style='font-size:0.82rem;color:#9aa0aa;'>{sig['name']}</div>"
                         f"<div style='font-size:1.3rem;font-weight:700;'>{icon} {raw}</div>"
-                        f"<div style='font-size:0.78rem;color:#b6bac4;'>阈值 {comp}{thr} · {label}</div>"
+                        f"<div style='font-size:0.78rem;color:#b6bac4;'>阈值 {comp}{thr} · {label} · 得分{score_str}</div>"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
@@ -253,7 +257,7 @@ with st.expander("📝 数据录入", expanded=False):
     if st.button("📊 计算今日评分", use_container_width=True):
         result = compute_daily_score()
         if result:
-            st.success(f"✅ 评分已更新：综合得分 {result['total_score']}")
+            st.success(f"✅ 评分已更新：综合得分 {result['total_score']:+.2f}")
             st.rerun()
         else:
             st.warning("今日尚无信号数据，请先录入")
