@@ -47,19 +47,19 @@ def init_page_style(watermark_text: str = WATERMARK_TEXT) -> None:
         }
         .yyq-card:hover { background: #2a2a2a; }
         .yyq-card-title {
-            font-size: 0.75rem;
+            font-size: 2rem;
             color: #8c8c8c;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             font-weight: 500;
         }
         .yyq-card-value {
-            font-size: 1.7rem;
-            font-weight: 600;
+            font-size: 4.8rem;
+            font-weight: 700;
             line-height: 1.15;
             margin-bottom: 6px;
             color: #dfdfdf;
         }
-        .yyq-card-desc { font-size: 0.8rem; color: #8c8c8c; }
+        .yyq-card-desc { font-size: 2rem; color: #8c8c8c; }
 
         /* ===== 标签 ===== */
         .yyq-chip {
@@ -309,10 +309,10 @@ def render_phase_matrix_cell(phase: str) -> str:
     bg = config.get("bg_color", "#2D2D2D")
     text_color = config.get("text_color", "#9CA3AF")
 
-    return (f'<td style="text-align:center;padding:6px 4px;background:{bg};'
-            f'border-radius:8px;min-width:60px;">'
-            f'<span style="font-size:1.2rem;">{emoji}</span><br/>'
-            f'<span style="font-size:0.65rem;color:{text_color};">{phase[:2]}</span>'
+    return (f'<td style="text-align:center;padding:14px 10px;background:{bg};'
+            f'border-radius:10px;min-width:96px;">'
+            f'<span style="font-size:3rem;">{emoji}</span><br/>'
+            f'<span style="font-size:1.6rem;color:{text_color};">{phase[:2]}</span>'
             f'</td>')
 
 
@@ -357,15 +357,15 @@ def render_chain_card(target: dict, phase_data: dict = None) -> str:
     }.get(market, ("#2D2D2D", "#9CA3AF"))
 
     return (
-        f'<div style="border:1px solid rgba(120,120,140,0.18);border-radius:12px;padding:10px 12px;'
-        f'margin-bottom:6px;background:linear-gradient(135deg,{bg}22,rgba(255,255,255,0.01));'
-        f'min-height:72px;">'
-        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-        f'<span style="font-size:0.9rem;font-weight:600;color:#e2e8f0;">{emoji} {name}</span>'
-        f'<span style="font-size:0.65rem;padding:1px 6px;border-radius:4px;background:{market_badge[0]};color:{market_badge[1]};">{market}</span>'
+        f'<div style="border:1px solid rgba(120,120,140,0.18);border-radius:14px;padding:18px 20px;'
+        f'margin-bottom:10px;background:linear-gradient(135deg,{bg}22,rgba(255,255,255,0.01));'
+        f'min-height:120px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+        f'<span style="font-size:2.8rem;font-weight:700;color:#e2e8f0;">{emoji} {name}</span>'
+        f'<span style="font-size:1.3rem;padding:4px 12px;border-radius:6px;background:{market_badge[0]};color:{market_badge[1]};">{market}</span>'
         f'</div>'
-        f'<div style="font-size:0.75rem;color:{text_color};font-weight:600;margin-bottom:3px;">{label}</div>'
-        f'<div style="font-size:0.7rem;color:#94a3b8;">量比 {vol_ratio_str} · 涨跌 {change_str}</div>'
+        f'<div style="font-size:2.3rem;color:{text_color};font-weight:600;margin-bottom:6px;">{label}</div>'
+        f'<div style="font-size:1.8rem;color:#94a3b8;">量比 {vol_ratio_str} · 涨跌 {change_str}</div>'
         f'</div>'
     )
 
@@ -398,10 +398,10 @@ def render_chain_map(phases: dict) -> None:
 
         # 环节标题
         st.markdown(
-            f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;margin-top:12px;">'
-            f'<span style="font-size:1.1rem;font-weight:700;color:{chain_color};">'
+            f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;margin-top:14px;">'
+            f'<span style="font-size:3rem;font-weight:700;color:{chain_color};">'
             f'{overall} {chain}</span>'
-            f'<span style="font-size:0.72rem;color:#64748b;">多{bullish} 空{bearish}</span>'
+            f'<span style="font-size:1.8rem;color:#64748b;">多{bullish} 空{bearish}</span>'
             f'</div>',
             unsafe_allow_html=True
         )
@@ -428,7 +428,7 @@ def render_chain_map(phases: dict) -> None:
             st.markdown(
                 f'<div style="margin-bottom:4px;">'
                 f'<span style="font-size:0.7rem;color:#64748b;margin-left:4px;">{group_name}</span>'
-                f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;">'
+                f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;">'
                 f'{cards_html}'
                 f'</div></div>',
                 unsafe_allow_html=True
@@ -468,10 +468,10 @@ def render_phase_time_matrix(phases: dict, history_phases: dict = None) -> None:
         st.markdown(f'<span style="font-size:0.85rem;font-weight:600;color:{CHAIN_COLORS.get(chain, "#6B7280")};">{chain}</span>', unsafe_allow_html=True)
 
         # 表头
-        header_html = '<tr><td style="padding:4px 8px;font-size:0.72rem;color:#94a3b8;font-weight:600;">标的</td>'
+        header_html = '<tr><td style="padding:6px 10px;font-size:1.6rem;color:#94a3b8;font-weight:600;">标的</td>'
         for d in dates:
             short_date = d[5:] if len(d) >= 10 else d  # MM-DD
-            header_html += f'<td style="text-align:center;padding:4px;font-size:0.68rem;color:#94a3b8;">{short_date}</td>'
+            header_html += f'<td style="text-align:center;padding:6px;font-size:1.5rem;color:#94a3b8;">{short_date}</td>'
         header_html += '</tr>'
 
         # 数据行
@@ -481,7 +481,7 @@ def render_phase_time_matrix(phases: dict, history_phases: dict = None) -> None:
             name = t["name"]
             market_tag = {"A股": "🇨🇳", "美股": "🇺🇸", "ETF": "📊"}.get(t["market"], "")
 
-            row_html = f'<tr><td style="padding:4px 8px;font-size:0.75rem;color:#e2e8f0;white-space:nowrap;">{market_tag}{name}</td>'
+            row_html = f'<tr><td style="padding:6px 10px;font-size:1.7rem;color:#e2e8f0;white-space:nowrap;">{market_tag}{name}</td>'
 
             sym_history = history_phases.get(sym, [])
             for d in dates:

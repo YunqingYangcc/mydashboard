@@ -25,7 +25,7 @@ from kb.market_constants import (
     PHASE_BOTTOM, PHASE_ACCUMULATE, PHASE_RALLY, PHASE_WASH,
     PHASE_DISTRIBUTE, PHASE_TOP, PHASE_DECLINE, PHASE_PANIC_BOTTOM,
     PHASE_SIDeways, PHASE_CONFIG, BULLISH_PHASES, BEARISH_PHASES, NEUTRAL_PHASES,
-    TARGET_STOCKS, SYMBOL_MAP, CHAIN_TARGETS,
+    TARGET_STOCKS, SYMBOL_MAP, CHAIN_TARGETS, SECTOR_COEFFICIENT,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,10 +42,10 @@ def _safe_series(s: pd.Series) -> np.ndarray:
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """计算量能分析所需的中间指标
+    """计算量能分析所需的中间指标 (V2.0 修正版)
 
-    需要输入至少60天的OHLCV数据
-    返回新增列: vol_ma20, vol_ratio, ma5, ma20, price_position, price_change_pct, high_60, low_60
+    需要输入至少30天的OHLCV数据（原要求60天，已优化支持30天）
+    新增: vol_ratio (5日均量基准), vol_trend_ratio (5日/20日趋势比)
     """
     if df is None or len(df) < 5:
         return df
@@ -56,35 +56,36 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["vol_ma5"] = df["volume"].rolling(window=5, min_periods=3).mean()
     df["vol_ma20"] = df["volume"].rolling(window=20, min_periods=10).mean()
 
-    # 量比 = 当日成交量 / 20日均量
+    # 标准量比 = 当日成交量 / 近5日平均成交量 (市场通用定义)
     df["vol_ratio"] = np.where(
-        df["vol_ma20"] > 0,
-        df["volume"] / df["vol_ma20"],
+        df["vol_ma5"] > 0,
+        df["volume"] / df["vol_ma5"],
         1.0
     )
 
-    # 短期量比 = 5日均量 / 20日均量（捕捉量能趋势变化）
-    df["vol_ratio_short"] = np.where(
+    # 量能趋势比 = 5日均量 / 20日均量 (捕捉量能方向变化)
+    df["vol_trend_ratio"] = np.where(
         df["vol_ma20"] > 0,
         df["vol_ma5"] / df["vol_ma20"],
         1.0
     )
 
-    # 量能趋势: 近5日均量 vs 前5日均量(5日前的5日)
-    df["vol_ma5_prev"] = df["vol_ma5"].shift(5)
-    df["vol_trend"] = np.where(
-        (df["vol_ma5_prev"] > 0) & (df["vol_ma5"] > 0),
-        df["vol_ma5"] / df["vol_ma5_prev"],
-        1.0
-    )
-
-    # 收盘价均线
+    # 收盘价均线（动态调整窗口，支持30天数据）
     df["ma5"] = df["close"].rolling(window=5, min_periods=3).mean()
-    df["ma20"] = df["close"].rolling(window=20, min_periods=10).mean()
+    ma10_window = min(10, len(df))
+    df["ma10"] = df["close"].rolling(window=ma10_window, min_periods=max(3, ma10_window//2)).mean()
+    ma20_window = min(20, len(df))
+    df["ma20"] = df["close"].rolling(window=ma20_window, min_periods=max(5, ma20_window//2)).mean()
+    
+    ma60_window = min(60, len(df))
+    ma60_min_periods = max(10, ma60_window // 2)
+    df["ma60"] = df["close"].rolling(window=ma60_window, min_periods=ma60_min_periods).mean()
 
-    # 60日价格区间
-    df["high_60"] = df["close"].rolling(window=60, min_periods=20).max()
-    df["low_60"] = df["close"].rolling(window=60, min_periods=20).min()
+    # 60日价格区间（动态调整窗口）
+    high_low_window = min(60, len(df))
+    high_low_min_periods = max(10, high_low_window // 2)
+    df["high_60"] = df["close"].rolling(window=high_low_window, min_periods=high_low_min_periods).max()
+    df["low_60"] = df["close"].rolling(window=high_low_window, min_periods=high_low_min_periods).min()
 
     # 价格位置 = (close - low_60) / (high_60 - low_60)，0=最低，1=最高
     df["price_position"] = np.where(
@@ -97,7 +98,11 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["price_change_pct"] = df["close"].pct_change() * 100
 
     # 连续3日波动幅度（用于筑底判定）
-    df["daily_range_pct"] = ((df["high"] - df["low"]) / df["close"] * 100).fillna(0)
+    df["daily_range_pct"] = np.where(
+        df["close"] > 0,
+        (df["high"] - df["low"]) / df["close"] * 100,
+        0
+    )
     df["low_volatility_3d"] = df["daily_range_pct"].rolling(window=3, min_periods=3).max() < 2.0
 
     # 30日跌幅（用于恐慌见底判定）
@@ -139,19 +144,20 @@ def _compute_prev_high_volume(df: pd.DataFrame) -> pd.Series:
     return result
 
 
-def determine_market_phase(df: pd.DataFrame, date: Optional[str] = None) -> dict:
+def determine_market_phase(df: pd.DataFrame, date: Optional[str] = None, symbol: str = None) -> dict:
     """判定指定日期的行情阶段
 
     Args:
-        df: DataFrame with OHLCV data (至少60天)
+        df: DataFrame with OHLCV data (至少30天，已优化)
         date: 判定日期 (YYYY-MM-DD)，默认取最新一天
+        symbol: 标的代码（用于获取行业系数）
 
     Returns:
         dict with keys: phase, vol_condition, price_condition, vol_ratio,
                         price_position, price_change_pct, reasoning, action_suggestion
     """
-    if df is None or len(df) < 20:
-        return _default_result("数据不足(需至少20天)")
+    if df is None or len(df) < 15:
+        return _default_result("数据不足(需至少15天)")
 
     df = compute_indicators(df)
 
@@ -171,81 +177,114 @@ def determine_market_phase(df: pd.DataFrame, date: Optional[str] = None) -> dict
 
     # 提取指标
     vol_ratio = float(row.get("vol_ratio", 1.0) or 1.0)
-    vol_ratio_short = float(row.get("vol_ratio_short", 1.0) or 1.0)
-    vol_trend = float(row.get("vol_trend", 1.0) or 1.0)
+    vol_trend_ratio = float(row.get("vol_trend_ratio", 1.0) or 1.0)
     price_position = float(row.get("price_position", 0.5) or 0.5)
     price_change_pct = float(row.get("price_change_pct", 0.0) or 0.0)
-    ma5 = row.get("ma5")
-    ma20 = row.get("ma20")
-    low_volatility_3d = bool(row.get("low_volatility_3d", False))
-    drop_30d_pct = float(row.get("drop_30d_pct", 0.0) or 0.0)
-    prev_high_vol = row.get("prev_high_vol")
+    
+    # 安全转换均线值
+    ma5_val = float(row.get("ma5")) if pd.notna(row.get("ma5")) else None
+    ma10_val = float(row.get("ma10")) if pd.notna(row.get("ma10")) else None
+    ma20_val = float(row.get("ma20")) if pd.notna(row.get("ma20")) else None
+    ma60_val = float(row.get("ma60")) if pd.notna(row.get("ma60")) else None
+    prev_high_vol_val = float(row.get("prev_high_vol")) if pd.notna(row.get("prev_high_vol")) else None
+    
+    # 动态获取行业系数
+    if symbol:
+        target = SYMBOL_MAP.get(symbol, {})
+        chain = target.get("chain", "default")
+    else:
+        chain = "default"
+    coeff = SECTOR_COEFFICIENT.get(chain, SECTOR_COEFFICIENT["default"])
+    
+    # 综合量能判定 (V2.0 修正)
+    is_volume_up = vol_ratio > coeff["volume_up"] or vol_trend_ratio > 1.4
+    is_volume_down = vol_ratio < coeff["volume_down"] and vol_trend_ratio < 0.8
+    is_volume_extreme = vol_ratio > coeff["extreme_vol"]
 
-    # 综合量能判定: vol_ratio(当日/20日均) + vol_ratio_short(5日均/20日均) + vol_trend(近5日/前5日)
-    # 当vol_ratio不够高但vol_ratio_short或vol_trend显著时，仍判定为放量
-    is_volume_up = vol_ratio > 1.3 or vol_ratio_short > 1.4 or vol_trend > 1.5
-    is_volume_down = vol_ratio < 0.7 and vol_ratio_short < 0.8
-    is_volume_extreme = vol_ratio > 2.0 or vol_ratio_short > 2.2
-
-    # 安全转换
-    ma5_val = float(ma5) if pd.notna(ma5) else None
-    ma20_val = float(ma20) if pd.notna(ma20) else None
-    prev_high_vol_val = float(prev_high_vol) if pd.notna(prev_high_vol) else None
+    # 趋势强度因子: 识别主升浪中的缩量上涨（筹码锁定）
+    # V2.1 修正：必须满足 MA5 > MA20 > MA60 才是真正的主升浪
+    is_uptrend = (ma5_val is not None and ma20_val is not None and ma60_val is not None 
+                  and ma5_val > ma20_val and ma20_val > ma60_val)
+    recent_gain_5d = float(df.loc[idx, "close"] / df.loc[max(0, idx-4), "close"] - 1) * 100 if idx >= 4 else 0
+    is_strong_uptrend = is_uptrend and recent_gain_5d > 8.0
 
     trade_date = str(row.get("trade_date", ""))
 
-    # ===== 优先级判定（从高到低） =====
+    # ===== 优先级判定（从高到低，风险优先） =====
 
-    # 1. 恐慌见底: 极端放量+暴跌+30日深跌
-    if is_volume_extreme and price_change_pct < -5.0 and drop_30d_pct < -15.0:
+    # 1. 恐慌见底: 极端放量 + 暴跌(<-5%) + 30日深跌(<-15%) + 振幅>8%
+    drop_30d_pct = float(row.get("drop_30d_pct", 0.0) or 0.0)
+    daily_range_pct = float(row.get("daily_range_pct", 0.0) or 0.0)
+    
+    if is_volume_extreme and price_change_pct < -5.0 and drop_30d_pct < -15.0 and daily_range_pct > 8.0:
         return _build_result(
             PHASE_PANIC_BOTTOM, trade_date,
-            vol_met=is_volume_extreme, price_met=price_change_pct < -5.0 and drop_30d_pct < -15.0,
+            vol_met=is_volume_extreme, price_met=True,
             vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
-            reason=f"恐慌性放量(量比{vol_ratio:.1f}x/短比{vol_ratio_short:.1f}x)且暴跌({price_change_pct:.1f}%)，30日跌幅{drop_30d_pct:.1f}%"
+            reason=f"恐慌性放量(量比{vol_ratio:.1f}x)且暴跌({price_change_pct:.1f}%)，振幅{daily_range_pct:.1f}%"
         )
 
-    # 2. 见顶: 价格创新高但量能萎缩 + 价格位置>70%
+    # 2. 派发: 高位放量滞涨 (优先级高于见顶，作为预警)
+    if is_volume_up and abs(price_change_pct) < 0.5 and price_position > 0.80:
+        return _build_result(
+            PHASE_DISTRIBUTE, trade_date,
+            vol_met=is_volume_up, price_met=True,
+            vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
+            reason=f"高位({price_position:.0%})放量(量比{vol_ratio:.1f}x)但价格不涨，派发信号"
+        )
+
+    # 3. 见顶: 价格创60日新高 AND 量能萎缩 (<前高对应量的80%) AND 非主升浪
+    # V2.1 修正：必须明确价格创60日新高，而不仅仅是位置>95%
+    is_new_high = row["close"] >= row.get("high_60", 0) * 0.99  # 接近或达到60日新高
     if (prev_high_vol_val is not None and prev_high_vol_val > 0
             and row.get("volume", 0) < prev_high_vol_val * 0.8
-            and price_position > 0.70):
+            and is_new_high
+            and price_position > 0.95
+            and not is_strong_uptrend):
         return _build_result(
             PHASE_TOP, trade_date,
             vol_met=row.get("volume", 0) < prev_high_vol_val * 0.8,
-            price_met=price_position > 0.70,
+            price_met=is_new_high and price_position > 0.95,
             vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
-            reason=f"价格位置{price_position:.0%}高位但量能萎缩(量比{vol_ratio:.1f}x)，量价背离"
-        )
-
-    # 3. 派发: 放量+价格不涨+高位
-    if is_volume_up and abs(price_change_pct) < 1.0 and price_position > 0.80:
-        return _build_result(
-            PHASE_DISTRIBUTE, trade_date,
-            vol_met=is_volume_up, price_met=abs(price_change_pct) < 1.0 and price_position > 0.80,
-            vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
-            reason=f"高位({price_position:.0%})放量(量比{vol_ratio:.1f}x/短比{vol_ratio_short:.1f}x)但价格不涨({price_change_pct:+.1f}%)，派发信号"
+            reason=f"价格创60日新高但量能萎缩(量比{vol_ratio:.1f}x)，量价背离"
         )
 
     # 4. 吸筹: 放量+低位+未再跌
     if is_volume_up and price_position < 0.40 and price_change_pct > -1.0:
         return _build_result(
             PHASE_ACCUMULATE, trade_date,
-            vol_met=is_volume_up, price_met=price_position < 0.40 and price_change_pct > -1.0,
+            vol_met=is_volume_up, price_met=True,
             vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
-            reason=f"低位({price_position:.0%})放量(量比{vol_ratio:.1f}x/短比{vol_ratio_short:.1f}x)且未再跌，主力吸筹"
+            reason=f"低位({price_position:.0%})放量(量比{vol_ratio:.1f}x)且未再跌，主力吸筹"
         )
 
-    # 5. 拉升: 放量+上涨+MA5>MA20
-    if is_volume_up and price_change_pct > 1.0 and ma5_val and ma20_val and ma5_val > ma20_val:
+    # 5. 拉升: 放量+上涨+MA5>MA20+价格在MA20之上
+    # V2.1 修正：增加价格在MA20之上的条件，确保是真正的拉升而非反弹
+    if (is_volume_up and price_change_pct > 1.0 
+            and ma5_val and ma20_val and ma5_val > ma20_val
+            and row["close"] > ma20_val):
         return _build_result(
             PHASE_RALLY, trade_date,
-            vol_met=is_volume_up, price_met=price_change_pct > 1.0 and ma5_val > ma20_val,
+            vol_met=is_volume_up, price_met=True,
             vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
-            reason=f"量价齐升(量比{vol_ratio:.1f}x, 涨{price_change_pct:+.1f}%)，MA5>MA20趋势确立"
+            reason=f"量价齐升(量比{vol_ratio:.1f}x, 涨{price_change_pct:+.1f}%)，趋势确立"
         )
 
-    # 6. 洗盘: 缩量+小幅回调+趋势仍向上
-    if is_volume_down and -3.0 < price_change_pct < 0.0 and ma5_val and ma20_val and ma5_val > ma20_val:
+    # 5.5 加速上涨修正 (V2.0): 强势主升浪中任何上涨都是最强信号
+    if is_strong_uptrend and price_change_pct > 0.5:
+        return _build_result(
+            PHASE_RALLY, trade_date,
+            vol_met=True, price_met=True,
+            vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
+            reason=f"强势主升浪中(5日涨{recent_gain_5d:.1f}%)，筹码锁定良好，加速上涨"
+        )
+
+    # 6. 洗盘: 缩量+小幅回调+趋势仍向上+价格未跌破MA20
+    # V2.1 修正：增加价格未跌破MA20的条件，确保是洗盘而非趋势反转
+    low_volatility_3d = bool(row.get("low_volatility_3d", False))
+    if (is_volume_down and -3.0 < price_change_pct < 0.0 
+            and ma5_val and ma20_val and ma5_val > ma20_val
+            and row["close"] > ma20_val):
         return _build_result(
             PHASE_WASH, trade_date,
             vol_met=is_volume_down, price_met=-3.0 < price_change_pct < 0.0 and ma5_val > ma20_val,
@@ -253,22 +292,38 @@ def determine_market_phase(df: pd.DataFrame, date: Optional[str] = None) -> dict
             reason=f"缩量回调(量比{vol_ratio:.1f}x, 跌{price_change_pct:+.1f}%)但趋势仍向上，洗盘"
         )
 
-    # 7. 筑底: 缩量+低位+低波动
-    if is_volume_down and price_position < 0.40 and low_volatility_3d:
+    # 7. 筑底: 缩量+低位+低波动+充分下跌
+    # V2.1 修正：增加30日跌幅>10%的条件，确保是真正的底部而非高位横盘
+    if (is_volume_down and price_position < 0.40 
+            and low_volatility_3d
+            and drop_30d_pct < -10.0):
         return _build_result(
             PHASE_BOTTOM, trade_date,
             vol_met=is_volume_down, price_met=price_position < 0.40 and low_volatility_3d,
             vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
-            reason=f"低位({price_position:.0%})缩量(量比{vol_ratio:.1f}x)且波动极小，筑底中"
+            reason=f"低位({price_position:.0%})缩量(量比{vol_ratio:.1f}x)且波动极小，30日跌{drop_30d_pct:.1f}%，筑底中"
         )
 
-    # 8. 下跌: 下跌+MA5<MA20
-    if price_change_pct < -1.0 and ma5_val and ma20_val and ma5_val < ma20_val:
+    # 8. 下跌: (MA5<MA20 AND MA10<MA20) OR (连续3日累计跌幅>5%)
+    # V2.1 修正：补充连续3日累计跌幅判定，及时识别极端暴跌
+    is_ma_broken = (ma5_val and ma20_val and ma10_val 
+                    and ma5_val < ma20_val and ma10_val < ma20_val)
+    
+    # 计算连续3日累计跌幅
+    if idx >= 3:
+        close_3d_ago = df.loc[idx-3, "close"]
+        cumulative_drop = (row["close"] / close_3d_ago - 1) * 100 if close_3d_ago > 0 else 0
+    else:
+        cumulative_drop = 0
+    
+    is_cumulative_drop = cumulative_drop < -5.0
+    
+    if (price_change_pct < -1.0 and is_ma_broken) or is_cumulative_drop:
         return _build_result(
             PHASE_DECLINE, trade_date,
-            vol_met=True, price_met=price_change_pct < -1.0 and ma5_val < ma20_val,
+            vol_met=True, price_met=True,
             vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
-            reason=f"下跌趋势(跌{price_change_pct:+.1f}%)且MA5<MA20，空头排列"
+            reason=f"趋势破坏(MA5/MA10均跌破MA20 或 3日累计跌{cumulative_drop:.1f}%)，空仓观望"
         )
 
     # 9. 默认: 震荡
@@ -328,7 +383,7 @@ def batch_determine_phases(symbol: str, df: pd.DataFrame, last_n_days: int = 5) 
     Returns:
         list of phase result dicts, most recent first
     """
-    if df is None or len(df) < 20:
+    if df is None or len(df) < 15:
         return []
 
     df = compute_indicators(df)
@@ -339,7 +394,7 @@ def batch_determine_phases(symbol: str, df: pd.DataFrame, last_n_days: int = 5) 
 
     for idx in recent.index:
         trade_date = str(df.loc[idx, "trade_date"])
-        result = determine_market_phase(df, date=trade_date)
+        result = determine_market_phase(df, date=trade_date, symbol=symbol)
         result["symbol"] = symbol
         target = SYMBOL_MAP.get(symbol, {})
         result["name"] = target.get("name", symbol)
@@ -364,12 +419,12 @@ def determine_all_current() -> dict:
         name = target["name"]
 
         df = get_quotes_from_db(symbol, days=120)
-        if df is None or len(df) < 20:
+        if df is None or len(df) < 15:
             logger.warning(f"{name}({symbol}) 数据不足，跳过")
             results[symbol] = _default_result(f"{name}数据不足")
             continue
 
-        result = determine_market_phase(df)
+        result = determine_market_phase(df, symbol=symbol)
         result["symbol"] = symbol
         result["name"] = name
         result["market"] = target["market"]

@@ -394,3 +394,10 @@ CHAIN_TARGETS = {}
 for s in TARGET_STOCKS:
     chain = s["chain"]
     CHAIN_TARGETS.setdefault(chain, []).append(s)
+
+# ===== 半导体行业专属量价阈值配置 (V2.0) =====
+SECTOR_COEFFICIENT = {
+    "半导体": {"volume_up": 1.5, "volume_down": 0.6, "extreme_vol": 2.2},
+    "ETF": {"volume_up": 1.3, "volume_down": 0.7, "extreme_vol": 2.0},
+    "default": {"volume_up": 1.3, "volume_down": 0.7, "extreme_vol": 2.0}
+}

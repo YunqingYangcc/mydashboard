@@ -19,9 +19,9 @@ def main():
     init_db()
 
     print("📡 批量获取历史行情(120天)...")
-    print("  ⏳ 这可能需要几分钟，每个标的间隔0.5秒...")
+    print("  ⏳ 这可能需要较长时间，美股标的间隔5秒以避免限频...")
 
-    results = batch_fetch_and_store(days=120, sleep_interval=0.5)
+    results = batch_fetch_and_store(days=120, sleep_interval=5.0)
 
     print("\n📊 获取结果:")
     total_rows = 0
