@@ -10,5 +10,3 @@ data/*.db
 !data/.gitkeep
 data/exports/
 
-# AI 助手工作区配置
-.codebuddy/
