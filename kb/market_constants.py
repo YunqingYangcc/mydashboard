@@ -144,7 +144,7 @@ CHAIN_COLORS = {
 }
 
 # 产业链流程顺序
-CHAIN_FLOW = [CHAIN_GPU, CHAIN_HBM, CHAIN_OPTICAL, CHAIN_PACKAGE, CHAIN_EQUIPMENT]
+CHAIN_FLOW = [CHAIN_GPU, CHAIN_HBM, CHAIN_OPTICAL, CHAIN_PACKAGE, CHAIN_EQUIPMENT, CHAIN_COMPOSITE]
 
 
 # ===== 标的定义 =====
@@ -315,7 +315,26 @@ TARGET_STOCKS = [
         "yf_code": "LITE",
         "desc": "光通信收发器",
     },
-    # === ETF (2只) ===
+    # === ETF (7只) ===
+    # A股代表性ETF
+    {
+        "symbol": "159995",
+        "name": "芯片ETF",
+        "market": "ETF",
+        "chain": CHAIN_COMPOSITE,
+        "ak_code": "159995",
+        "yf_code": None,
+        "desc": "A股芯片龙头ETF",
+    },
+    {
+        "symbol": "588000",
+        "name": "科创50ETF",
+        "market": "ETF",
+        "chain": CHAIN_COMPOSITE,
+        "ak_code": "588000",
+        "yf_code": None,
+        "desc": "科创板50指数ETF",
+    },
     {
         "symbol": "512460",
         "name": "国联安半导体ETF",
@@ -333,6 +352,34 @@ TARGET_STOCKS = [
         "ak_code": "512480",
         "yf_code": None,
         "desc": "中华半导体ETF",
+    },
+    # 美股代表性ETF
+    {
+        "symbol": "SMH",
+        "name": "VanEck半导体ETF",
+        "market": "美股",
+        "chain": CHAIN_COMPOSITE,
+        "ak_code": None,
+        "yf_code": "SMH",
+        "desc": "美股半导体龙头ETF(NVDA/TSM/AVGO)",
+    },
+    {
+        "symbol": "SOXX",
+        "name": "iShares半导体ETF",
+        "market": "美股",
+        "chain": CHAIN_COMPOSITE,
+        "ak_code": None,
+        "yf_code": "SOXX",
+        "desc": "美股半导体ETF(AVGO/NVDA/AMD)",
+    },
+    {
+        "symbol": "QQQ",
+        "name": "纳指100ETF",
+        "market": "美股",
+        "chain": CHAIN_COMPOSITE,
+        "ak_code": None,
+        "yf_code": "QQQ",
+        "desc": "纳斯达克100科技综合ETF",
     },
 ]
 

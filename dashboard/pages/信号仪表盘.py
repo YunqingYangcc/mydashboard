@@ -1,3 +1,8 @@
+"""AI产业链行情阶段仪表盘 - 主页面
+
+📋 Prompt绑定: prompts/展示绘图.md
+修改本文件前必须先阅读该 prompt，确保改动符合6区块布局和数据缓存策略。
+"""
 import sys
 from pathlib import Path
 

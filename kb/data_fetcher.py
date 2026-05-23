@@ -1,4 +1,8 @@
-"""行情数据获取模块 - baostock(A股/ETF) + Yahoo Chart API(美股)"""
+"""行情数据获取模块 - baostock(A股/ETF) + Yahoo Chart API(美股)
+
+📋 Prompt绑定: prompts/数据导入.md
+修改本文件前必须先阅读该 prompt，确保改动符合数据源规则和存储结构定义。
+"""
 import time
 import logging
 from datetime import datetime, timedelta

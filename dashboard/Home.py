@@ -18,17 +18,11 @@ from kb.storage import (
 init_db()
 init_page_style()
 
-st.title("🚀 认知管理助手")
+st.title("🚀 知识库助手")
 
 # 励志标语
 SLOGANS = [
-    "📈 认知差是最大的投资壁垒",
     "🧠 每天进步1%，一年强大37倍",
-    "⛏️ 挖矿不如掌握采矿技术",
-    "🎯 知道什么不重要，理解为什么才值钱",
-    "📚 知识不复习等于快时尚，穿几次就扔",
-    "🔥 成为AI时代的知识资本家",
-    "💎 认知深度决定财富高度",
 ]
 
 import random
@@ -59,25 +53,13 @@ st.divider()
 st.subheader("快速入口")
 entry_col1, entry_col2, entry_col3, entry_col4 = st.columns(4)
 with entry_col1:
-    st.page_link("pages/布局.py", label="📊 布局", icon="📊")
+    st.page_link("pages/信号仪表盘.py", label="🚦 行情仪表盘", icon="🚦")
 with entry_col2:
     st.page_link("pages/知识库.py", label="📝 知识库", icon="📝")
 with entry_col3:
-    st.page_link("pages/学习笔记.py", label="🧠 学习笔记", icon="🧠")
+    st.page_link("pages/布局.py", label="📊 学习布局", icon="📊")
 with entry_col4:
-    st.page_link("pages/试题.py", label="📝 试题练习", icon="📝")
-
-entry_col5, entry_col6 = st.columns(2)
-with entry_col5:
-    st.page_link("pages/复盘.py", label="🔄 复盘", icon="🔄")
-with entry_col6:
-    st.page_link("pages/文档导入管理.py", label="📥 文档导入", icon="📥")
-
-entry_col7, entry_col8 = st.columns(2)
-with entry_col7:
-    st.page_link("pages/信号仪表盘.py", label="🚦 信号仪表盘", icon="🚦")
-with entry_col8:
-    st.page_link("pages/进度跟踪.py", label="📍 进度跟踪", icon="📍")
+    st.page_link("pages/学习笔记.py", label="🧠 知识点", icon="🧠")
 
 # 签名
 with st.sidebar:

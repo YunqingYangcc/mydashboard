@@ -1,3 +1,8 @@
+"""UI组件库 - Notion暗色主题 + 行情阶段可视化
+
+📋 Prompt绑定: prompts/展示绘图.md
+修改本文件前必须先阅读该 prompt，确保改动符合区块布局、配色规范和组件接口定义。
+"""
 from pathlib import Path
 
 import pandas as pd
@@ -21,91 +26,112 @@ def init_page_style(watermark_text: str = WATERMARK_TEXT) -> None:
     统一的页面样式初始化，必须在每个页面的开头调用。
     """
     st.set_page_config(
-        page_title="杨云清 Dashboard",
-        page_icon="🧠",
+        page_title="杨云清的个人知识库",
+        page_icon="⚡",
         layout="wide",
         initial_sidebar_state="expanded"
     )
     st.markdown(
         """
         <style>
-        .block-container {
-            padding-top: 1.2rem;
-            padding-bottom: 2rem;
-        }
+        /* ===== Notion风格 全局 ===== */
+        .block-container { padding-top: 4rem; padding-bottom: 2rem; max-width: 96rem; }
+        .stApp { background: #1a1a1a; }
+
+        /* ===== 卡片 ===== */
         .yyq-card {
-            border: 1px solid rgba(120, 120, 140, 0.18);
-            border-radius: 16px;
-            padding: 16px 18px;
-            background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
-            min-height: 112px;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 6px;
+            padding: 16px 20px;
+            background: #242424;
         }
+        .yyq-card:hover { background: #2a2a2a; }
         .yyq-card-title {
-            font-size: 0.92rem;
-            color: #9aa0aa;
-            margin-bottom: 8px;
+            font-size: 0.75rem;
+            color: #8c8c8c;
+            margin-bottom: 6px;
+            font-weight: 500;
         }
         .yyq-card-value {
-            font-size: 1.9rem;
-            font-weight: 700;
-            line-height: 1.1;
-            margin-bottom: 8px;
-        }
-        .yyq-card-desc {
-            font-size: 0.88rem;
-            color: #b6bac4;
-        }
-        .yyq-chip {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 999px;
-            font-size: 0.8rem;
-            margin-right: 6px;
+            font-size: 1.7rem;
+            font-weight: 600;
+            line-height: 1.15;
             margin-bottom: 6px;
-            border: 1px solid rgba(120, 120, 140, 0.24);
+            color: #dfdfdf;
         }
+        .yyq-card-desc { font-size: 0.8rem; color: #8c8c8c; }
+
+        /* ===== 标签 ===== */
+        .yyq-chip {
+            display: inline-block; padding: 3px 8px; border-radius: 4px;
+            font-size: 0.78rem; margin-right: 6px; margin-bottom: 6px;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+            color: #bfbfbf;
+        }
+
+        /* ===== 面板 ===== */
         .yyq-panel {
-            border: 1px solid rgba(120, 120, 140, 0.18);
-            border-radius: 16px;
-            padding: 14px 16px;
-            margin-bottom: 14px;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 6px; padding: 14px 16px; margin-bottom: 10px;
+            background: #242424;
         }
-        .yyq-watermark {
-            position: fixed;
-            right: 18px;
-            bottom: 10px;
-            font-size: 11px;
-            color: rgba(148, 163, 184, 0.15);
-            letter-spacing: 0.2em;
-            z-index: 9999;
-            pointer-events: none;
-            user-select: none;
-        }
+        .yyq-panel:hover { background: #2a2a2a; }
+
+        /* ===== 签名 ===== */
         .yyq-signature {
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(139, 92, 246, 0.08));
-            border: 1px solid rgba(139, 92, 246, 0.15);
-            border-radius: 12px;
-            padding: 14px 16px;
-            margin-top: 24px;
-            text-align: center;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 6px; padding: 14px 16px; margin-top: 20px; text-align: center;
         }
         .yyq-signature-name {
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: #a5b4fc;
-            letter-spacing: 0.15em;
-            margin-bottom: 4px;
+            font-size: 0.85rem; font-weight: 600; color: #bfbfbf;
+            letter-spacing: 0.08em; margin-bottom: 4px;
         }
         .yyq-signature-desc {
-            font-size: 0.72rem;
-            color: rgba(165, 180, 252, 0.5);
-            letter-spacing: 0.08em;
+            font-size: 0.68rem; color: rgba(191,191,191,0.4); letter-spacing: 0.05em;
         }
-        .yyq-divider {
-            border: none;
-            border-top: 1px solid rgba(139, 92, 246, 0.12);
-            margin: 16px 0;
+
+        /* ===== Streamlit 原生元素 ===== */
+        h1 { font-weight: 600 !important; color: #e6e6e6 !important; }
+        h2 { font-weight: 600 !important; color: #dfdfdf !important; }
+        h3 { font-weight: 500 !important; color: #bfbfbf !important; font-size: 1rem !important; }
+        hr { border-color: rgba(255,255,255,0.06) !important; margin: 1rem 0 !important; }
+        [data-testid="stMetricValue"] { color: #dfdfdf !important; font-weight: 600 !important; }
+        [data-testid="stMetricLabel"] { color: #8c8c8c !important; }
+
+        /* 侧边栏 */
+        [data-testid="stSidebar"] {
+            background: #1d1d1d !important;
+            border-right: 1px solid rgba(255,255,255,0.05) !important;
         }
+
+        /* 输入框 */
+        input, textarea {
+            border-radius: 6px !important;
+            border: 1px solid rgba(255,255,255,0.10) !important;
+            font-size: 0.9rem !important;
+            padding: 10px 12px !important;
+            background: #242424 !important;
+            color: #e6e6e6 !important;
+        }
+        input:focus, textarea:focus {
+            border-color: rgba(100,130,150,0.5) !important;
+            box-shadow: none !important;
+        }
+        input[type="text"] { min-height: 40px !important; }
+        textarea { min-height: 120px !important; line-height: 1.6 !important; }
+        ::placeholder { color: #5a5a5a !important; }
+
+        /* 按钮 */
+        .stButton > button {
+            border-radius: 6px !important;
+            font-weight: 500 !important;
+            font-size: 0.85rem !important;
+        }
+
+        /* 选择框 */
+        .stSelectbox [data-baseweb="select"] { border-radius: 6px !important; }
+        [data-testid="stDataFrame"] { border-radius: 6px !important; overflow: hidden !important; }
         </style>
         """,
         unsafe_allow_html=True,

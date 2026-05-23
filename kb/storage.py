@@ -474,64 +474,6 @@ def _init_review_db() -> None:
 
 # ===== 文档操作（知识库.db）=====
 
-def upsert_document(payload: dict) -> dict:
-    now = now_iso()
-    doc_hash = _hash([payload.get("title", ""), payload.get("content", "")[:1000]])
-    
-    # 临时关闭 row_factory 获取 last_insert_rowid
-    with get_knowledge_db() as conn:
-        existing = conn.execute(
-            "SELECT id FROM documents WHERE hash = ?", (doc_hash,)
-        ).fetchone()
-        
-        if existing:
-            conn.execute("""
-                UPDATE documents SET
-                    title=?, content=?, summary=?, url=?, doc_date=?,
-                    chapter=?, tags_json=?, metadata_json=?, updated_at=?
-                WHERE hash=?
-            """, (
-                payload.get("title"),
-                payload.get("content"),
-                payload.get("summary"),
-                payload.get("url"),
-                payload.get("doc_date"),
-                payload.get("chapter"),
-                json_dumps(payload.get("tags_json", [])),
-                json_dumps(payload.get("metadata_json", {})),
-                now,
-                doc_hash
-            ))
-            doc_id = existing[0] if isinstance(existing, tuple) else existing["id"]
-        else:
-            cursor = conn.execute("""
-                INSERT INTO documents(
-                    source_type, source_name, title, content, summary, author, url, doc_date,
-                    hash, document_key, content_hash, chapter, tags_json, metadata_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                payload.get("source_type", "manual"),
-                payload.get("source_name", "manual"),
-                payload.get("title"),
-                payload.get("content"),
-                payload.get("summary"),
-                payload.get("author"),
-                payload.get("url"),
-                payload.get("doc_date"),
-                doc_hash,
-                payload.get("document_key"),
-                payload.get("content_hash"),
-                payload.get("chapter"),
-                json_dumps(payload.get("tags_json", [])),
-                json_dumps(payload.get("metadata_json", {})),
-                now,
-                now
-            ))
-            doc_id = cursor.lastrowid
-    
-    return {"id": doc_id, "hash": doc_hash}
-
-
 def fetch_latest_documents(limit: int = 20) -> list:
     with get_knowledge_db() as conn:
         rows = conn.execute(
@@ -679,35 +621,6 @@ def claim_validation_summary() -> dict:
             "SELECT verification_status, COUNT(*) as count FROM claims GROUP BY verification_status"
         ).fetchall()
     return {row["verification_status"]: row["count"] for row in rows}
-
-
-# ===== 复盘操作（复盘.db）=====
-
-def list_reviews(limit: int = 50) -> list:
-    with get_review_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM reviews ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-    return _decode_rows(rows, ["metadata_json"])
-
-
-def insert_review(payload: dict) -> None:
-    now = now_iso()
-    with get_review_db() as conn:
-        conn.execute("""
-            INSERT INTO reviews(review_type, review_period, summary, reflection, next_actions, score, metadata_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            payload.get("review_type"),
-            payload.get("review_period"),
-            payload.get("summary"),
-            payload.get("reflection"),
-            payload.get("next_actions"),
-            payload.get("score"),
-            json_dumps(payload.get("metadata", {})),
-            now,
-            now
-        ))
 
 
 # ===== 任务操作（知识库.db）=====
@@ -1522,43 +1435,6 @@ def delete_extracted_by_source_document_key(document_key: str) -> None:
                 SELECT id FROM documents WHERE document_key = ?
             )
         """, (document_key,))
-
-
-# ===== 进度跟踪（复盘.db）=====
-
-def insert_progress_log(content: str, log_time: str = None) -> None:
-    """插入进度记录"""
-    from kb.utils import now_iso
-    now = now_iso()
-    if log_time is None:
-        log_time = now
-    with get_review_db() as conn:
-        conn.execute("""
-            INSERT INTO progress_logs(content, log_time, created_at)
-            VALUES (?, ?, ?)
-        """, (content.strip(), log_time, now))
-
-
-def list_progress_logs(limit: int = 100) -> list:
-    """查询进度记录，按时间倒序（最新的在前面）"""
-    with get_review_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM progress_logs ORDER BY log_time DESC, id DESC LIMIT ?",
-            (limit,)
-        ).fetchall()
-    return rows
-
-
-def delete_progress_log(log_id: int) -> None:
-    """删除指定进度记录"""
-    with get_review_db() as conn:
-        conn.execute("DELETE FROM progress_logs WHERE id = ?", (log_id,))
-
-
-def clear_progress_logs() -> None:
-    """清空所有进度记录"""
-    with get_review_db() as conn:
-        conn.execute("DELETE FROM progress_logs")
 
 
 # ===== 知识-信号绑定（知识库.db）=====
