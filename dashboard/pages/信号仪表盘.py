@@ -9,7 +9,11 @@ ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from dashboard.components import init_page_style, metric_card, render_signature
+from dashboard.components import (
+    init_page_style, metric_card, render_signature,
+    render_chain_map, render_phase_time_matrix, render_volume_price_chart,
+    render_phase_detail, render_phase_badge,
+)
 from kb.storage import (
     init_db,
     insert_observation,
@@ -33,18 +37,161 @@ from kb.storage import (
     check_claims_for_signal_change,
     list_claims,
 )
+from kb.market_constants import (
+    PHASE_CONFIG, ALL_PHASES, BULLISH_PHASES, BEARISH_PHASES, NEUTRAL_PHASES,
+    CHAIN_FLOW, CHAIN_COLORS, CHAIN_TARGETS, SYMBOL_MAP,
+    TARGET_STOCKS, A_SHARE_SYMBOLS, US_SHARE_SYMBOLS, ETF_SYMBOLS,
+)
+from kb.volume_analyzer import (
+    determine_market_phase, batch_determine_phases, determine_all_current,
+    compute_chain_phase_summary, save_phases_to_db, get_phases_from_db,
+)
+from kb.data_fetcher import get_quotes_from_db, fetch_single_latest, batch_fetch_and_store
 from kb.utils import now_iso
 
 init_db()
 init_page_style()
 
-st.title("🚦 信号仪表盘")
-st.caption("通用数据跟踪与信号评估 · 支持任意领域")
+st.title("🚦 AI产业链行情阶段仪表盘")
+st.caption("量在价先 · 8种可枚举行情阶段 · 20只标的全覆盖")
 
-# ========== 加载数据 ==========
+# ========== 加载行情阶段数据 ==========
+@st.cache_data(ttl=300)
+def load_all_phases():
+    """加载所有标的的当前行情阶段"""
+    return determine_all_current()
+
+@st.cache_data(ttl=300)
+def load_history_phases():
+    """加载所有标的的最近5天行情阶段"""
+    result = {}
+    for target in TARGET_STOCKS:
+        sym = target["symbol"]
+        phases = get_phases_from_db(sym, days=5)
+        if phases:
+            result[sym] = phases
+    return result
+
+phases = load_all_phases()
+history_phases = load_history_phases()
+chain_summary = compute_chain_phase_summary(phases)
+
+# ========== 区块1: 行情总览栏 ==========
+st.subheader("📊 行情总览")
+
+# 统计各阶段数量
+phase_counts = {}
+for sym, p in phases.items():
+    phase = p.get("phase", "震荡")
+    phase_counts[phase] = phase_counts.get(phase, 0) + 1
+
+bullish_count = sum(phase_counts.get(p, 0) for p in BULLISH_PHASES)
+bearish_count = sum(phase_counts.get(p, 0) for p in BEARISH_PHASES)
+neutral_count = sum(phase_counts.get(p, 0) for p in NEUTRAL_PHASES)
+
+# 整体行情判断
+if bullish_count > bearish_count + neutral_count:
+    overall_phase = "🟢 多头主导"
+    overall_desc = "多数标的处于吸筹/拉升阶段"
+elif bearish_count > bullish_count + neutral_count:
+    overall_phase = "🔴 空头主导"
+    overall_desc = "多数标的处于派发/下跌阶段"
+else:
+    overall_phase = "🟡 震荡分化"
+    overall_desc = "多空分歧，结构性机会"
+
+col1, col2, col3, col4, col5 = st.columns(5)
+with col1:
+    metric_card("产业链行情", overall_phase, overall_desc)
+with col2:
+    metric_card("🟢 利好标的", bullish_count, f"吸筹/拉升/恐慌见底")
+with col3:
+    metric_card("🔴 利空标的", bearish_count, f"派发/见顶/下跌")
+with col4:
+    metric_card("🟡 中性标的", neutral_count, f"筑底/洗盘/震荡")
+with col5:
+    # 主导阶段
+    if phase_counts:
+        dominant = max(phase_counts, key=phase_counts.get)
+        dom_config = PHASE_CONFIG.get(dominant, {})
+        metric_card("主导阶段", f"{dom_config.get('emoji', '⚖️')} {dominant}",
+                    f"共{phase_counts[dominant]}只标的")
+    else:
+        metric_card("主导阶段", "—", "无数据")
+
+# 产业链维度得分
+st.markdown("")
+chain_cols = st.columns(len(CHAIN_FLOW))
+for idx, chain in enumerate(CHAIN_FLOW):
+    with chain_cols[idx % len(chain_cols)]:
+        cs = chain_summary.get(chain, {})
+        bullish = cs.get("bullish_count", 0)
+        bearish = cs.get("bearish_count", 0)
+        color = "#10B981" if bullish > bearish else ("#EF4444" if bearish > bullish else "#F59E0B")
+        emoji = "🟢" if bullish > bearish else ("🔴" if bearish > bullish else "🟡")
+        st.markdown(
+            f'<div style="text-align:center;padding:8px;border-radius:10px;'
+            f'background:{color}11;border:1px solid {color}33;">'
+            f'<div style="font-size:0.75rem;color:#94a3b8;">{chain}</div>'
+            f'<div style="font-size:1.1rem;font-weight:700;color:{color};">{emoji} {cs.get("phase", "—")}</div>'
+            f'<div style="font-size:0.68rem;color:#64748b;">多{bullish} 空{bearish}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+# ========== 区块2: 产业链行情地图 ==========
+st.divider()
+st.subheader("🗺️ 产业链行情地图")
+
+render_chain_map(phases)
+
+# ========== 区块3: 行情阶段时序矩阵 ==========
+st.divider()
+st.subheader("📋 行情阶段时序矩阵")
+st.caption("行=标的，列=最近5个交易日，观察行情阶段变化与产业链传导")
+
+render_phase_time_matrix(phases, history_phases)
+
+# ========== 区块4: 标的详情(交互) ==========
+st.divider()
+st.subheader("🔍 标的详情")
+
+# 选择标的
+all_options = {}
+for t in TARGET_STOCKS:
+    sym = t["symbol"]
+    name = t["name"]
+    market = t["market"]
+    phase = phases.get(sym, {}).get("phase", "—")
+    all_options[f"{t['chain']} | {market} | {name}({sym}) | {phase}"] = sym
+
+selected_label = st.selectbox("选择标的", list(all_options.keys()), index=0)
+selected_symbol = all_options[selected_label]
+
+if selected_symbol:
+    phase_data = phases.get(selected_symbol, {})
+
+    col_detail, col_chart = st.columns([2, 3])
+
+    with col_detail:
+        render_phase_detail(phase_data)
+
+    with col_chart:
+        # 量价趋势图
+        df = get_quotes_from_db(selected_symbol, days=120)
+        if df is not None and len(df) >= 10:
+            render_volume_price_chart(df, selected_symbol)
+        else:
+            st.info("暂无行情数据，请先获取历史数据")
+
+# ========== 区块5: 产业景气信号(原有) ==========
+st.divider()
+st.subheader("📈 产业景气信号")
+st.caption("CapEx/TSMC营收等产业景气指标，作为行情判定的辅助参考")
+
 signal_defs = list_signal_definitions()
 obs_list = latest_observation_map()
-obs_map = {o["metric_key"]: o for o in obs_list}  # 转为 dict 以 metric_key 为 key
+obs_map = {o["metric_key"]: o for o in obs_list}
 latest_score = latest_signal_score()
 dimensions = sorted({s["dimension"] for s in signal_defs}) if signal_defs else []
 
@@ -54,62 +201,29 @@ STATUS_STYLE = {
     "neutral":  ("🟡", "中性"),
 }
 
-ACTION_LABEL = {
-    "strong_buy": "🟢 强烈看多",
-    "buy": "📈 偏多",
-    "hold": "⏸️ 观望",
-    "sell": "📉 偏空",
-    "strong_sell": "🔴 强烈看空",
-}
-
-# ========== 1. 综合评分 ==========
-st.subheader("📊 综合评分")
-
 if latest_score:
-    total = latest_score.get("total_score", 0)
-    pos = latest_score.get("positive_count", 0)
-    neg = latest_score.get("negative_count", 0)
-    neu = latest_score.get("neutral_count", 0)
-    action = latest_score.get("action_suggestion", "hold")
-    score_date = latest_score.get("score_date", "")
+    with st.expander("📊 综合评分(产业景气)", expanded=False):
+        total = latest_score.get("total_score", 0)
+        action = latest_score.get("action_suggestion", "hold")
+        dim_breakdown = latest_score.get("dimension_breakdown_json", {})
+        if isinstance(dim_breakdown, str):
+            import json
+            try:
+                dim_breakdown = json.loads(dim_breakdown)
+            except Exception:
+                dim_breakdown = {}
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        score_color = "🟢" if total > 0 else ("🔴" if total < 0 else "🟡")
-        metric_card(f"{score_color} 综合得分", f"{total:+.2f}", score_date)
-    with col2:
-        metric_card("🟢 利好", pos, "信号数")
-    with col3:
-        metric_card("🟡 中性", neu, "信号数")
-    with col4:
-        metric_card("🔴 利空", neg, "信号数")
-    with col5:
-        metric_card("动作建议", ACTION_LABEL.get(action, action), "")
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            st.metric("产业景气得分", f"{total:+.2f}")
+        with col2:
+            if dim_breakdown:
+                for dim, stats in dim_breakdown.items():
+                    d_avg = stats.get("dim_avg_score", 0)
+                    dim_color = "🟢" if d_avg > 0 else ("🔴" if d_avg < 0 else "🟡")
+                    st.caption(f"**{dim}** {dim_color}{d_avg:+.2f}")
 
-    dim_breakdown = latest_score.get("dimension_breakdown_json", {})
-    if isinstance(dim_breakdown, str):
-        import json
-        try:
-            dim_breakdown = json.loads(dim_breakdown)
-        except Exception:
-            dim_breakdown = {}
-    if dim_breakdown:
-        dim_cols = st.columns(min(len(dim_breakdown), 5))
-        for idx, (dim, stats) in enumerate(dim_breakdown.items()):
-            with dim_cols[idx % len(dim_cols)]:
-                d_pos = stats.get("positive", 0)
-                d_neg = stats.get("negative", 0)
-                d_neu = stats.get("neutral", 0)
-                d_avg = stats.get("dim_avg_score", 0)
-                dim_color = "🟢" if d_avg > 0 else ("🔴" if d_avg < 0 else "🟡")
-                st.caption(f"**{dim}** {dim_color}{d_avg:+.2f}  🟢{d_pos} 🟡{d_neu} 🔴{d_neg}")
-else:
-    st.info("暂无评分数据，录入指标后点击「计算评分」生成")
-
-# ========== 2. 信号灯矩阵 ==========
-st.divider()
-st.subheader("🚦 信号灯矩阵")
-
+# 信号灯矩阵（保留原有）
 recent_values = list_recent_signal_values(limit=200)
 sig_latest = {}
 for rv in recent_values:
@@ -117,61 +231,95 @@ for rv in recent_values:
     if key not in sig_latest or rv["observed_at"] > sig_latest[key]["observed_at"]:
         sig_latest[key] = rv
 
-if not signal_defs:
-    st.info("暂无信号定义，请在下方「信号配置」中添加")
-else:
-    for dim in dimensions:
-        dim_sigs = [s for s in signal_defs if s["dimension"] == dim]
-        st.markdown(f"**{dim}**")
-        cols = st.columns(min(len(dim_sigs), 4))
-        for idx, sig in enumerate(dim_sigs):
-            with cols[idx % len(cols)]:
-                sv = sig_latest.get(sig["signal_key"])
-                if sv:
-                    icon, label = STATUS_STYLE.get(sv.get("status", "neutral"), ("⚪", "无数据"))
-                    raw = sv.get("raw_value", "-")
-                    thr = sv.get("threshold", "-")
-                    comp = ">" if sig["comparator"] == "gt" else "<"
-                    score = sv.get("score", 0)
-                    score_str = f"{score:+.2f}" if isinstance(score, float) else str(score)
-                    st.markdown(
-                        f"<div style='border:1px solid rgba(120,120,140,0.18);border-radius:12px;padding:10px 12px;margin-bottom:8px;'>"
-                        f"<div style='font-size:0.82rem;color:#9aa0aa;'>{sig['name']}</div>"
-                        f"<div style='font-size:1.3rem;font-weight:700;'>{icon} {raw}</div>"
-                        f"<div style='font-size:0.78rem;color:#b6bac4;'>阈值 {comp}{thr} · {label} · 得分{score_str}</div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    obs = obs_map.get(sig["metric_key"])
-                    val_str = obs.get('value', '-') if obs else '-'
-                    sub_label = "尚未评估" if obs else "无数据"
-                    st.markdown(
-                        f"<div style='border:1px solid rgba(120,120,140,0.18);border-radius:12px;padding:10px 12px;margin-bottom:8px;'>"
-                        f"<div style='font-size:0.82rem;color:#9aa0aa;'>{sig['name']}</div>"
-                        f"<div style='font-size:1.3rem;font-weight:700;'>⚪ {val_str}</div>"
-                        f"<div style='font-size:0.78rem;color:#b6bac4;'>{sub_label}</div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
+if signal_defs:
+    with st.expander("🚦 信号灯矩阵", expanded=False):
+        for dim in dimensions:
+            dim_sigs = [s for s in signal_defs if s["dimension"] == dim]
+            st.markdown(f"**{dim}**")
+            cols = st.columns(min(len(dim_sigs), 4))
+            for idx, sig in enumerate(dim_sigs):
+                with cols[idx % len(cols)]:
+                    sv = sig_latest.get(sig["signal_key"])
+                    if sv:
+                        icon, label = STATUS_STYLE.get(sv.get("status", "neutral"), ("⚪", "无数据"))
+                        raw = sv.get("raw_value", "-")
+                        thr = sv.get("threshold", "-")
+                        comp = ">" if sig["comparator"] == "gt" else "<"
+                        score = sv.get("score", 0)
+                        score_str = f"{score:+.2f}" if isinstance(score, float) else str(score)
+                        st.markdown(
+                            f"<div style='border:1px solid rgba(120,120,140,0.18);border-radius:12px;padding:10px 12px;margin-bottom:8px;'>"
+                            f"<div style='font-size:0.82rem;color:#9aa0aa;'>{sig['name']}</div>"
+                            f"<div style='font-size:1.3rem;font-weight:700;'>{icon} {raw}</div>"
+                            f"<div style='font-size:0.78rem;color:#b6bac4;'>阈值 {comp}{thr} · {label} · 得分{score_str}</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        obs = obs_map.get(sig["metric_key"])
+                        val_str = obs.get('value', '-') if obs else '-'
+                        st.markdown(
+                            f"<div style='border:1px solid rgba(120,120,140,0.18);border-radius:12px;padding:10px 12px;margin-bottom:8px;'>"
+                            f"<div style='font-size:0.82rem;color:#9aa0aa;'>{sig['name']}</div>"
+                            f"<div style='font-size:1.3rem;font-weight:700;'>⚪ {val_str}</div>"
+                            f"<div style='font-size:0.78rem;color:#b6bac4;'>尚未评估</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
 
-# ========== 3. 异常数据提醒 ==========
-anomalies = list_anomaly_observations(limit=10)
-if anomalies:
-    st.divider()
-    st.subheader("⚠️ 异常数据提醒")
-    for a in anomalies[:5]:
-        z = a.get("z_score", 0) or 0
-        direction = "↑" if z > 0 else "↓"
-        st.warning(f"**{a['metric_key']}** 值={a['raw_value']} z-score={z:.1f}{direction} (偏离2个标准差)")
-
-# ========== 4. 数据录入 ==========
+# ========== 区块6: 数据管理 ==========
 st.divider()
-with st.expander("📝 数据录入", expanded=False):
-    st.markdown("**录入观测值**，系统自动评估关联信号 + 计算环比/异常")
+with st.expander("⚙️ 数据管理", expanded=False):
+    st.markdown("**行情数据管理** — 获取/刷新行情数据并判定行情阶段")
 
-    existing_keys = sorted({s["metric_key"] for s in signal_defs}) if signal_defs else []
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📡 刷新所有标的行情(120天)", use_container_width=True, type="primary"):
+            with st.spinner("正在批量获取行情数据..."):
+                results = batch_fetch_and_store(days=120, sleep_interval=0.5)
+                total = sum(results.values())
+                st.success(f"✅ 已获取 {len(results)} 只标的，共 {total} 条数据")
+                # 重新判定行情阶段
+                new_phases = determine_all_current()
+                save_phases_to_db(new_phases)
+                st.cache_data.clear()
+                st.rerun()
 
+    with col2:
+        if st.button("🔍 重新判定所有行情阶段", use_container_width=True):
+            with st.spinner("正在判定行情阶段..."):
+                new_phases = determine_all_current()
+                count = save_phases_to_db(new_phases)
+                st.success(f"✅ 已判定 {count} 只标的的行情阶段")
+                st.cache_data.clear()
+                st.rerun()
+
+    st.divider()
+    st.markdown("**单只标的刷新**")
+    refresh_options = {f"{t['name']}({t['symbol']})": t["symbol"] for t in TARGET_STOCKS}
+    refresh_sel = st.selectbox("选择标的", list(refresh_options.keys()), key="refresh_sel")
+    if st.button("🔄 刷新选中标的"):
+        sym = refresh_options[refresh_sel]
+        with st.spinner(f"正在刷新 {refresh_sel}..."):
+            fetch_count = fetch_single_latest(sym, days=10)
+            # 重新判定
+            df = get_quotes_from_db(sym, days=120)
+            if df is not None and len(df) >= 20:
+                result = determine_market_phase(df)
+                result["symbol"] = sym
+                result["name"] = SYMBOL_MAP.get(sym, {}).get("name", sym)
+                result["market"] = SYMBOL_MAP.get(sym, {}).get("market", "")
+                result["chain"] = SYMBOL_MAP.get(sym, {}).get("chain", "")
+                save_phases_to_db({sym: result})
+                st.success(f"✅ {refresh_sel}: {result['emoji']} {result['phase']} - {result.get('reasoning', '')[:40]}")
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.warning("数据不足，无法判定")
+
+    # 原有数据录入
+    st.divider()
+    st.markdown("**指标录入** (原有信号系统)")
     with st.form("obs_form", clear_on_submit=True):
         col1, col2, col3 = st.columns([2, 1, 2])
         with col1:
@@ -179,7 +327,7 @@ with st.expander("📝 数据录入", expanded=False):
         with col2:
             value = st.number_input("数值", step=0.1, format="%f")
         with col3:
-            observed_at = st.text_input("观测时间（留空=当前）", placeholder="留空自动填充")
+            observed_at = st.text_input("观测时间", placeholder="留空自动填充")
 
         col4, col5, col6 = st.columns(3)
         with col4:
@@ -207,225 +355,19 @@ with st.expander("📝 数据录入", expanded=False):
                     "source": source.strip() or "manual",
                     "asset": asset.strip(),
                 })
-                # 自动评估关联信号
                 results = evaluate_signals_for_metric(metric_key.strip(), value, obs_time)
-                # 自动计算环比/异常
                 deriv = compute_observation_derivatives(metric_key.strip(), obs_time, value)
-                # 检查信号变化是否影响断言
                 claim_alerts = []
                 for r in (results or []):
                     alerts = check_claims_for_signal_change(r["signal_key"], r["status"])
                     claim_alerts.extend(alerts)
-
                 msg = "✅ 已录入"
                 if results:
                     msg += f" · 评估 {len(results)} 个信号"
                 if deriv.get("is_anomaly"):
                     msg += f" · ⚠️ 异常(z={deriv.get('z_score', 0):.1f})"
-                if claim_alerts:
-                    msg += f" · 🧠 {len(claim_alerts)} 条断言待验证"
                 st.success(msg)
                 st.rerun()
-
-    # 批量录入
-    st.divider()
-    st.markdown("**批量录入**（每行：`指标Key,数值`）")
-    batch_text = st.text_area("批量数据", height=80, placeholder="nvda_pe,65.2\nus_10y_yield,4.5\nsox_pe,32.1")
-    if st.button("📦 批量录入", use_container_width=True):
-        now = now_iso()
-        count = 0
-        for line in batch_text.strip().split("\n"):
-            parts = line.strip().split(",")
-            if len(parts) >= 2:
-                try:
-                    mk = parts[0].strip()
-                    mv = float(parts[1].strip())
-                    insert_observation({
-                        "metric_key": mk, "metric_name": mk, "value": mv,
-                        "observed_at": now, "frequency": "daily", "source": "batch",
-                    })
-                    evaluate_signals_for_metric(mk, mv, now)
-                    compute_observation_derivatives(mk, now, mv)
-                    count += 1
-                except Exception:
-                    pass
-        if count:
-            st.success(f"✅ 批量录入 {count} 条")
-            st.rerun()
-
-    st.divider()
-    if st.button("📊 计算今日评分", use_container_width=True):
-        result = compute_daily_score()
-        if result:
-            st.success(f"✅ 评分已更新：综合得分 {result['total_score']:+.2f}")
-            st.rerun()
-        else:
-            st.warning("今日尚无信号数据，请先录入")
-
-# ========== 5. 趋势图+衍生数据 ==========
-with st.expander("📈 趋势图", expanded=False):
-    all_metric_keys = sorted({s["metric_key"] for s in signal_defs} | {k for k in obs_map.keys()})
-    if all_metric_keys:
-        selected_metrics = st.multiselect("选择指标", all_metric_keys, default=all_metric_keys[:3])
-        if selected_metrics:
-            for mk in selected_metrics:
-                history = list_observations_by_metric(mk, limit=60)
-                if history:
-                    df = pd.DataFrame(history)
-                    df["observed_at"] = pd.to_datetime(df["observed_at"])
-                    df = df.sort_values("observed_at")
-                    chart_df = df[["observed_at", "value"]].set_index("observed_at")
-                    unit_str = history[0].get("unit", "")
-                    st.line_chart(chart_df, y_label=unit_str, use_container_width=True)
-
-                    # 衍生数据
-                    derivs = list_derivatives_for_metric(mk, limit=5)
-                    if derivs:
-                        d = derivs[0]
-                        parts = [f"**{mk}** ({len(history)} 个数据点)"]
-                        if d.get("mom_pct") is not None:
-                            parts.append(f"环比 {d['mom_pct']:+.1f}%")
-                        if d.get("yoy_pct") is not None:
-                            parts.append(f"同比 {d['yoy_pct']:+.1f}%")
-                        if d.get("z_score") is not None:
-                            parts.append(f"z-score {d['z_score']:.1f}")
-                        st.caption(" · ".join(parts))
-                    else:
-                        st.caption(f"**{mk}** ({len(history)} 个数据点)")
-    else:
-        st.info("暂无指标数据")
-
-# ========== 6. AI 信号报告 ==========
-with st.expander("🤖 AI 信号报告", expanded=False):
-    st.markdown("AI 根据当前信号状态生成分析报告，含因果链解读和行动建议")
-
-    # 历史报告
-    reports = list_signal_reports(report_type="ai_weekly", limit=5)
-    if reports:
-        for r in reports:
-            st.markdown(f"**{r['report_date']}** · 模型: {r.get('model', 'N/A')}")
-            st.markdown(r["content"][:300] + "..." if len(r.get("content", "")) > 300 else r.get("content", ""))
-            if st.button("📄 查看全文", key=f"report_{r['id']}"):
-                st.markdown(r["content"])
-            st.divider()
-
-    # 生成新报告
-    provider = st.selectbox("AI 模型", ["gold", "zhipu", "xiaomi", "siliconflow"], index=0)
-    if st.button("🤖 生成 AI 报告", use_container_width=True):
-        with st.spinner("AI 正在分析信号数据..."):
-            from kb.ai import generate_signal_report
-            result = generate_signal_report(provider=provider)
-            if result["used_fallback"]:
-                st.error(f"AI 调用失败: {result.get('reason', '未知')}")
-            elif result["content"]:
-                st.success(f"✅ 报告已生成 (模型: {result['model']})")
-                st.markdown(result["content"])
-                st.rerun()
-            else:
-                st.error("AI 返回为空")
-
-# ========== 7. 断言-信号关联 ==========
-with st.expander("🧠 断言-信号关联", expanded=False):
-    st.markdown("关联断言到信号，信号变化时自动提醒验证断言")
-
-    all_claims = list_claims(limit=50)
-
-    if signal_defs and all_claims:
-        col_a, col_b = st.columns(2)
-        with col_a:
-            claim_options = {f"#{c['id']} {c.get('subject', c.get('statement', '')[:30])}": c for c in all_claims}
-            selected_claim = st.selectbox("选择断言", list(claim_options.keys()), key="link_claim_sel")
-        with col_b:
-            sig_options = {f"{s['signal_key']} - {s['name']}": s for s in signal_defs}
-            selected_sig = st.selectbox("选择信号", list(sig_options.keys()), key="link_sig_sel")
-
-        if st.button("🔗 关联断言与信号"):
-            claim_id = claim_options[selected_claim]["id"]
-            signal_key = sig_options[selected_sig]["signal_key"]
-            link_claim_to_signal(claim_id, signal_key)
-            st.success(f"✅ 已关联断言 #{claim_id} ↔ 信号 {signal_key}")
-            st.rerun()
-
-        # 显示已有断言-信号关联
-        st.divider()
-        st.markdown("**已有关联**")
-        for sig in signal_defs:
-            linked_claims = get_claims_for_signal(sig["signal_key"])
-            if linked_claims:
-                for c in linked_claims:
-                    status_icon = {"validated": "✅", "invalidated": "❌", "pending": "⏳"}.get(
-                        c.get("verification_status", "pending"), "⏳")
-                    col1, col2 = st.columns([5, 1])
-                    with col1:
-                        st.caption(f"  {status_icon} 断言#{c['id']} ↔ 信号 {sig['name']} · {c.get('subject', '')[:40]}")
-                    with col2:
-                        if st.button("❌", key=f"unlink_{c['id']}_{sig['signal_key']}", help="取消关联"):
-                            unlink_claim_from_signal(c["id"], sig["signal_key"])
-                            st.rerun()
-    else:
-        st.info("需要先有断言和信号定义才能关联")
-
-# ========== 8. 信号配置 ==========
-with st.expander("⚙️ 信号配置", expanded=False):
-    st.markdown("信号 = **指标 + 阈值 + 比较器**，录入指标值后自动评估")
-
-    with st.form("sig_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            sig_key = st.text_input("信号Key", placeholder="如 nvda_pe_overvalued")
-            sig_name = st.text_input("名称", placeholder="如 NVDA PE偏高")
-            sig_dimension = st.text_input("维度/分组", placeholder="如 估值、需求、宏观")
-        with col2:
-            sig_metric_key = st.text_input("关联指标Key", placeholder="如 nvda_pe")
-            sig_comparator = st.selectbox("比较器", ["gt", "lt"], index=0, help="gt=超过阈值不利, lt=低于阈值不利")
-            sig_threshold = st.number_input("阈值", step=0.1, format="%f")
-            sig_frequency = st.selectbox("频率", ["daily", "weekly", "monthly", "quarterly"], index=0)
-
-        sig_desc = st.text_input("描述", placeholder="可选，信号含义说明")
-
-        if st.form_submit_button("💾 保存信号", use_container_width=True):
-            if not all([sig_key.strip(), sig_name.strip(), sig_dimension.strip(), sig_metric_key.strip()]):
-                st.error("Key、名称、维度、指标Key 均不能为空")
-            else:
-                upsert_signal_definition({
-                    "signal_key": sig_key.strip(), "name": sig_name.strip(),
-                    "dimension": sig_dimension.strip(), "frequency": sig_frequency,
-                    "comparator": sig_comparator, "threshold": sig_threshold,
-                    "metric_key": sig_metric_key.strip(), "description": sig_desc.strip(),
-                })
-                st.success("✅ 信号已保存")
-                st.rerun()
-
-    if signal_defs:
-        st.divider()
-        st.markdown("**已有信号**")
-        for dim in dimensions:
-            dim_sigs = [s for s in signal_defs if s["dimension"] == dim]
-            st.markdown(f"**{dim}** ({len(dim_sigs)})")
-            for s in dim_sigs:
-                col1, col2, col3 = st.columns([5, 2, 1])
-                with col1:
-                    comp_str = ">" if s["comparator"] == "gt" else "<"
-                    st.caption(f"  {s['name']} — {s['metric_key']} {comp_str} {s['threshold']}")
-                with col2:
-                    st.caption(f"  {s.get('frequency', '')} · {s.get('description', '')}")
-                with col3:
-                    if st.button("🗑️", key=f"del_sig_{s['signal_key']}", help="删除"):
-                        delete_signal_definition(s["signal_key"])
-                        st.rerun()
-
-# ========== 9. 最新观测值一览 ==========
-with st.expander("📋 最新观测值", expanded=False):
-    if obs_map:
-        obs_list = list(obs_map.values()) if isinstance(obs_map, dict) else []
-        if obs_list:
-            df = pd.DataFrame(obs_list)
-            show_cols = [c for c in ["metric_key", "metric_name", "value", "unit", "observed_at", "source", "asset"] if c in df.columns]
-            st.dataframe(df[show_cols], use_container_width=True, hide_index=True)
-        else:
-            st.info("暂无观测数据")
-    else:
-        st.info("暂无观测数据")
 
 # 侧边栏
 with st.sidebar:

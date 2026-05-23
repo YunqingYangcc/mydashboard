@@ -9,6 +9,11 @@ from kb.constants import (
     RENDER_MODE_TEXT,
     WATERMARK_TEXT,
 )
+from kb.market_constants import (
+    PHASE_CONFIG, ALL_PHASES, BULLISH_PHASES, BEARISH_PHASES, NEUTRAL_PHASES,
+    CHAIN_FLOW, CHAIN_COLORS, CHAIN_TARGETS, SYMBOL_MAP,
+    TARGET_STOCKS, A_SHARE_SYMBOLS, US_SHARE_SYMBOLS, ETF_SYMBOLS,
+)
 
 
 def init_page_style(watermark_text: str = WATERMARK_TEXT) -> None:
@@ -240,3 +245,365 @@ def render_document_preview(document: dict | None) -> None:
         st.caption(absolute_path)
     else:
         st.text_area("正文", document.get("content", ""), height=360)
+
+
+# ===== 行情阶段组件 =====
+
+def render_phase_badge(phase: str, size: str = "normal") -> str:
+    """渲染行情阶段色标徽章HTML
+
+    Args:
+        phase: 行情阶段名称
+        size: small/normal/large
+    """
+    config = PHASE_CONFIG.get(phase, PHASE_CONFIG.get("震荡", {}))
+    emoji = config.get("emoji", "⚖️")
+    bg = config.get("bg_color", "#2D2D2D")
+    text_color = config.get("text_color", "#9CA3AF")
+    label = config.get("label", phase)
+
+    if size == "small":
+        return (f'<span style="display:inline-block;padding:2px 8px;border-radius:6px;'
+                f'background:{bg};color:{text_color};font-size:0.72rem;font-weight:600;">'
+                f'{emoji} {label}</span>')
+    elif size == "large":
+        return (f'<span style="display:inline-block;padding:8px 16px;border-radius:12px;'
+                f'background:{bg};color:{text_color};font-size:1.1rem;font-weight:700;">'
+                f'{emoji} {phase}</span>')
+    else:
+        return (f'<span style="display:inline-block;padding:4px 12px;border-radius:8px;'
+                f'background:{bg};color:{text_color};font-size:0.85rem;font-weight:600;">'
+                f'{emoji} {label}</span>')
+
+
+def render_phase_matrix_cell(phase: str) -> str:
+    """渲染行情阶段矩阵单元格HTML"""
+    config = PHASE_CONFIG.get(phase, PHASE_CONFIG.get("震荡", {}))
+    emoji = config.get("emoji", "⚖️")
+    bg = config.get("bg_color", "#2D2D2D")
+    text_color = config.get("text_color", "#9CA3AF")
+
+    return (f'<td style="text-align:center;padding:6px 4px;background:{bg};'
+            f'border-radius:8px;min-width:60px;">'
+            f'<span style="font-size:1.2rem;">{emoji}</span><br/>'
+            f'<span style="font-size:0.65rem;color:{text_color};">{phase[:2]}</span>'
+            f'</td>')
+
+
+def render_chain_card(target: dict, phase_data: dict = None) -> str:
+    """渲染产业链中的标的卡片HTML
+
+    Args:
+        target: 标的配置 dict (from TARGET_STOCKS)
+        phase_data: 行情阶段判定结果 dict
+    """
+    symbol = target["symbol"]
+    name = target["name"]
+    market = target["market"]
+    chain = target["chain"]
+
+    # 行情阶段
+    if phase_data:
+        phase = phase_data.get("phase", "震荡")
+        config = PHASE_CONFIG.get(phase, PHASE_CONFIG.get("震荡", {}))
+        emoji = config.get("emoji", "⚖️")
+        bg = config.get("bg_color", "#2D2D2D")
+        text_color = config.get("text_color", "#9CA3AF")
+        label = config.get("label", phase)
+        vol_ratio = phase_data.get("vol_ratio", "-")
+        change_pct = phase_data.get("price_change_pct")
+        change_str = f"{change_pct:+.1f}%" if isinstance(change_pct, (int, float)) else "-"
+
+        vol_ratio_str = f"{vol_ratio:.1f}x" if isinstance(vol_ratio, (int, float)) else "-"
+    else:
+        emoji = "⚪"
+        bg = "#1A1D23"
+        text_color = "#6B7280"
+        label = "无数据"
+        vol_ratio_str = "-"
+        change_str = "-"
+
+    # 市场标签颜色
+    market_badge = {
+        "A股": ("#1E3A5F", "#60A5FA"),
+        "美股": ("#1B4332", "#34D399"),
+        "ETF": ("#3B2F1E", "#FBBF24"),
+    }.get(market, ("#2D2D2D", "#9CA3AF"))
+
+    return (
+        f'<div style="border:1px solid rgba(120,120,140,0.18);border-radius:12px;padding:10px 12px;'
+        f'margin-bottom:6px;background:linear-gradient(135deg,{bg}22,rgba(255,255,255,0.01));'
+        f'min-height:72px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+        f'<span style="font-size:0.9rem;font-weight:600;color:#e2e8f0;">{emoji} {name}</span>'
+        f'<span style="font-size:0.65rem;padding:1px 6px;border-radius:4px;background:{market_badge[0]};color:{market_badge[1]};">{market}</span>'
+        f'</div>'
+        f'<div style="font-size:0.75rem;color:{text_color};font-weight:600;margin-bottom:3px;">{label}</div>'
+        f'<div style="font-size:0.7rem;color:#94a3b8;">量比 {vol_ratio_str} · 涨跌 {change_str}</div>'
+        f'</div>'
+    )
+
+
+def render_chain_map(phases: dict) -> None:
+    """渲染产业链行情地图 - 横向流程图
+
+    Args:
+        phases: {symbol: phase_result} from determine_all_current
+    """
+    chain_flow = CHAIN_FLOW
+
+    for chain in chain_flow:
+        targets = CHAIN_TARGETS.get(chain, [])
+        if not targets:
+            continue
+
+        chain_color = CHAIN_COLORS.get(chain, "#6B7280")
+
+        # 计算环节整体状态
+        chain_phases = []
+        for t in targets:
+            sym = t["symbol"]
+            if sym in phases:
+                chain_phases.append(phases[sym]["phase"])
+
+        bullish = sum(1 for p in chain_phases if p in BULLISH_PHASES)
+        bearish = sum(1 for p in chain_phases if p in BEARISH_PHASES)
+        overall = "🟢" if bullish > bearish else ("🔴" if bearish > bullish else "🟡")
+
+        # 环节标题
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;margin-top:12px;">'
+            f'<span style="font-size:1.1rem;font-weight:700;color:{chain_color};">'
+            f'{overall} {chain}</span>'
+            f'<span style="font-size:0.72rem;color:#64748b;">多{bullish} 空{bearish}</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        # 标的卡片 - 分A股/美股两排
+        a_targets = [t for t in targets if t["market"] == "A股"]
+        us_targets = [t for t in targets if t["market"] == "美股"]
+        etf_targets = [t for t in targets if t["market"] == "ETF"]
+
+        all_groups = []
+        if a_targets:
+            all_groups.append(("A股", a_targets))
+        if us_targets:
+            all_groups.append(("美股", us_targets))
+        if etf_targets:
+            all_groups.append(("ETF", etf_targets))
+
+        for group_name, group_targets in all_groups:
+            cards_html = ""
+            for t in group_targets:
+                phase_data = phases.get(t["symbol"])
+                cards_html += render_chain_card(t, phase_data)
+
+            st.markdown(
+                f'<div style="margin-bottom:4px;">'
+                f'<span style="font-size:0.7rem;color:#64748b;margin-left:4px;">{group_name}</span>'
+                f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;">'
+                f'{cards_html}'
+                f'</div></div>',
+                unsafe_allow_html=True
+            )
+
+
+def render_phase_time_matrix(phases: dict, history_phases: dict = None) -> None:
+    """渲染行情阶段时序矩阵
+
+    行=标的(按产业链分组), 列=最近5个交易日
+
+    Args:
+        phases: {symbol: phase_result}
+        history_phases: {symbol: [phase_result_5d]} 最近5天的阶段数据
+    """
+    if history_phases is None:
+        history_phases = {}
+
+    # 收集最近5个交易日
+    all_dates = set()
+    for sym, phase_list in history_phases.items():
+        for p in phase_list:
+            if p.get("trade_date"):
+                all_dates.add(p["trade_date"])
+    dates = sorted(all_dates)[-5:]
+
+    if not dates:
+        st.info("暂无历史行情阶段数据")
+        return
+
+    # 构建矩阵数据
+    for chain in CHAIN_FLOW:
+        targets = CHAIN_TARGETS.get(chain, [])
+        if not targets:
+            continue
+
+        st.markdown(f'<span style="font-size:0.85rem;font-weight:600;color:{CHAIN_COLORS.get(chain, "#6B7280")};">{chain}</span>', unsafe_allow_html=True)
+
+        # 表头
+        header_html = '<tr><td style="padding:4px 8px;font-size:0.72rem;color:#94a3b8;font-weight:600;">标的</td>'
+        for d in dates:
+            short_date = d[5:] if len(d) >= 10 else d  # MM-DD
+            header_html += f'<td style="text-align:center;padding:4px;font-size:0.68rem;color:#94a3b8;">{short_date}</td>'
+        header_html += '</tr>'
+
+        # 数据行
+        rows_html = ""
+        for t in targets:
+            sym = t["symbol"]
+            name = t["name"]
+            market_tag = {"A股": "🇨🇳", "美股": "🇺🇸", "ETF": "📊"}.get(t["market"], "")
+
+            row_html = f'<tr><td style="padding:4px 8px;font-size:0.75rem;color:#e2e8f0;white-space:nowrap;">{market_tag}{name}</td>'
+
+            sym_history = history_phases.get(sym, [])
+            for d in dates:
+                # 找到该日期的阶段
+                day_phase = None
+                for ph in sym_history:
+                    if ph.get("trade_date") == d:
+                        day_phase = ph.get("phase", "震荡")
+                        break
+
+                if day_phase:
+                    row_html += render_phase_matrix_cell(day_phase)
+                else:
+                    row_html += '<td style="text-align:center;padding:6px 4px;color:#374151;">—</td>'
+
+            row_html += '</tr>'
+            rows_html += row_html
+
+        st.markdown(
+            f'<div style="overflow-x:auto;margin-bottom:12px;">'
+            f'<table style="width:100%;border-collapse:separate;border-spacing:3px;">'
+            f'{header_html}{rows_html}'
+            f'</table></div>',
+            unsafe_allow_html=True
+        )
+
+
+def render_volume_price_chart(df: pd.DataFrame, symbol: str) -> None:
+    """渲染量价趋势双轴图
+
+    上半区: 价格折线 + MA5/MA20
+    下半区: 成交量柱状图 + 20日均量线
+
+    Args:
+        df: DataFrame with OHLCV data (from compute_indicators)
+        symbol: 标的代码
+    """
+    if df is None or len(df) < 5:
+        st.info("数据不足，无法绘制量价图")
+        return
+
+    from kb.volume_analyzer import compute_indicators
+
+    df = compute_indicators(df)
+
+    target = SYMBOL_MAP.get(symbol, {})
+    name = target.get("name", symbol)
+
+    # 取最近60天
+    plot_df = df.tail(60).copy()
+
+    if len(plot_df) == 0:
+        st.info("无可用数据")
+        return
+
+    # === 价格图 ===
+    price_data = {}
+    if "close" in plot_df.columns:
+        price_data["收盘价"] = plot_df["close"].values
+    if "ma5" in plot_df.columns:
+        ma5_vals = plot_df["ma5"].values
+        price_data["MA5"] = ma5_vals
+    if "ma20" in plot_df.columns:
+        price_data["MA20"] = plot_df["ma20"].values
+
+    if price_data:
+        price_chart_df = pd.DataFrame(price_data, index=plot_df["trade_date"].values)
+        st.line_chart(price_chart_df, use_container_width=True, height=220)
+
+    # === 成交量图 ===
+    vol_data = {}
+    if "volume" in plot_df.columns:
+        vol_data["成交量"] = plot_df["volume"].values
+    if "vol_ma20" in plot_df.columns:
+        vol_data["20日均量"] = plot_df["vol_ma20"].values
+
+    if vol_data:
+        vol_chart_df = pd.DataFrame(vol_data, index=plot_df["trade_date"].values)
+        st.line_chart(vol_chart_df, use_container_width=True, height=160)
+
+    # 量能异动日标注
+    if "vol_ratio" in plot_df.columns:
+        anomaly_days = plot_df[plot_df["vol_ratio"] > 2.0]
+        if len(anomaly_days) > 0:
+            dates_str = ", ".join(anomaly_days["trade_date"].values[-5:])
+            st.caption(f"⚡ 近期放量异动日: {dates_str}")
+
+
+def render_phase_detail(phase_data: dict) -> None:
+    """渲染行情阶段详情面板
+
+    Args:
+        phase_data: 行情阶段判定结果
+    """
+    phase = phase_data.get("phase", "震荡")
+    config = PHASE_CONFIG.get(phase, PHASE_CONFIG.get("震荡", {}))
+
+    # 大字展示当前阶段
+    st.markdown(
+        f'<div style="text-align:center;padding:20px;margin-bottom:16px;'
+        f'background:{config.get("bg_color", "#2D2D2D")};border-radius:16px;'
+        f'border:1px solid {config.get("text_color", "#9CA3AF")}33;">'
+        f'<div style="font-size:2.5rem;">{config.get("emoji", "⚖️")}</div>'
+        f'<div style="font-size:1.5rem;font-weight:700;color:{config.get("text_color", "#9CA3AF")};">{phase}</div>'
+        f'<div style="font-size:0.9rem;color:#b6bac4;margin-top:6px;">{config.get("label", "")}</div>'
+        f'<div style="font-size:0.82rem;color:#9aa0aa;margin-top:4px;">口诀: {config.get("formula", "")}</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    # 判定依据
+    st.markdown("**📋 判定依据**")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"量能条件: {phase_data.get('vol_condition', '—')}")
+    with col2:
+        st.markdown(f"价格条件: {phase_data.get('price_condition', '—')}")
+
+    # 中间指标
+    st.markdown("**📊 量能指标**")
+    vol_ratio = phase_data.get("vol_ratio")
+    price_pos = phase_data.get("price_position")
+    change_pct = phase_data.get("price_change_pct")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        vr_str = f"{vol_ratio:.1f}x" if isinstance(vol_ratio, (int, float)) else "—"
+        vr_color = "🟢" if isinstance(vol_ratio, (int, float)) and vol_ratio > 1.5 else (
+            "🔴" if isinstance(vol_ratio, (int, float)) and vol_ratio < 0.5 else "🟡"
+        )
+        st.metric("量比", f"{vr_color} {vr_str}")
+    with col2:
+        pp_str = f"{price_pos:.0%}" if isinstance(price_pos, (int, float)) else "—"
+        st.metric("价格位置(60日)", pp_str)
+    with col3:
+        ch_str = f"{change_pct:+.1f}%" if isinstance(change_pct, (int, float)) else "—"
+        st.metric("当日涨跌", ch_str)
+
+    # 操作建议
+    st.markdown("**🎯 操作建议**")
+    st.info(f"👉 {config.get('action', '观望')}")
+
+    # 投资者关注点
+    st.markdown("**👁️ 投资者关注**")
+    st.caption(phase_data.get("attention", config.get("attention", "")))
+
+    # 判定理由
+    reasoning = phase_data.get("reasoning", "")
+    if reasoning:
+        st.markdown("**🔍 判定理由**")
+        st.caption(reasoning)

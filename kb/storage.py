@@ -308,6 +308,41 @@ def _init_knowledge_db() -> None:
     CREATE INDEX IF NOT EXISTS idx_documents_document_key ON documents(document_key);
     CREATE INDEX IF NOT EXISTS idx_quizzes_document_key ON quizzes(document_key);
     CREATE INDEX IF NOT EXISTS idx_obs_deriv_metric ON observation_derivatives(metric_key);
+
+    CREATE TABLE IF NOT EXISTS stock_daily_quotes (
+        symbol TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        open REAL,
+        high REAL,
+        low REAL,
+        close REAL,
+        volume REAL,
+        turnover REAL,
+        change_pct REAL,
+        market TEXT NOT NULL,
+        industry_chain TEXT,
+        PRIMARY KEY (symbol, trade_date)
+    );
+
+    CREATE TABLE IF NOT EXISTS market_phases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        phase_date TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        vol_condition TEXT,
+        price_condition TEXT,
+        vol_ratio REAL,
+        price_position REAL,
+        price_change_pct REAL,
+        params_json TEXT DEFAULT '{}',
+        reasoning TEXT,
+        action_suggestion TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(symbol, phase_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_quotes_symbol_date ON stock_daily_quotes(symbol, trade_date);
+    CREATE INDEX IF NOT EXISTS idx_phases_symbol_date ON market_phases(symbol, phase_date);
     """
     with get_knowledge_db() as conn:
         conn.executescript(schema)
