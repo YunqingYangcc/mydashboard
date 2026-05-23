@@ -259,7 +259,7 @@ def determine_market_phase(df: pd.DataFrame, date: Optional[str] = None, symbol:
         )
 
     # 5. 拉升: 放量+上涨+MA5>MA20+价格在MA20之上
-    # V2.1 修正：增加价格在MA20之上的条件，确保是真正的拉升而非反弹
+    # V2.2 修正：强化量能权重，量比必须达到行业阈值才能判定为拉升
     if (is_volume_up and price_change_pct > 1.0 
             and ma5_val and ma20_val and ma5_val > ma20_val
             and row["close"] > ma20_val):
@@ -270,14 +270,39 @@ def determine_market_phase(df: pd.DataFrame, date: Optional[str] = None, symbol:
             reason=f"量价齐升(量比{vol_ratio:.1f}x, 涨{price_change_pct:+.1f}%)，趋势确立"
         )
 
-    # 5.5 加速上涨修正 (V2.0): 强势主升浪中任何上涨都是最强信号
-    if is_strong_uptrend and price_change_pct > 0.5:
+    # 5.5 温和拉升 (V2.2新增): 中等涨幅 + 平量/轻微缩量 + 趋势向上
+    # 适用场景：涨幅3-6%，量比0.8-1.2x，筹码锁定良好
+    is_moderate_gain = 3.0 <= price_change_pct <= 6.0
+    is_flat_volume = 0.8 <= vol_ratio <= 1.2
+    if (is_moderate_gain and is_flat_volume
+            and ma5_val and ma20_val and ma5_val > ma20_val
+            and row["close"] > ma20_val):
         return _build_result(
             PHASE_RALLY, trade_date,
             vol_met=True, price_met=True,
             vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
-            reason=f"强势主升浪中(5日涨{recent_gain_5d:.1f}%)，筹码锁定良好，加速上涨"
+            reason=f"温和拉升(量比{vol_ratio:.1f}x, 涨{price_change_pct:+.1f}%)，筹码锁定，趋势向上"
         )
+
+    # 5.6 加速上涨修正 (V2.0): 强势主升浪中任何上涨都是最强信号
+    # V2.2 修正：增加量能要求，即使是主升浪也需要基本量能支撑
+    if is_strong_uptrend and price_change_pct > 0.5:
+        # 主升浪中至少需要平量（量比>=0.7）
+        if vol_ratio >= 0.7:
+            return _build_result(
+                PHASE_RALLY, trade_date,
+                vol_met=True, price_met=True,
+                vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
+                reason=f"强势主升浪中(5日涨{recent_gain_5d:.1f}%)，量比{vol_ratio:.1f}x，筹码锁定良好，加速上涨"
+            )
+        else:
+            # 量能严重不足，降级为洗盘或震荡
+            return _build_result(
+                PHASE_WASH if price_change_pct < 0 else PHASE_SIDeways, trade_date,
+                vol_met=False, price_met=False,
+                vol_ratio=vol_ratio, price_position=price_position, price_change_pct=price_change_pct,
+                reason=f"主升浪但量能严重不足(量比{vol_ratio:.1f}x)，需警惕"
+            )
 
     # 6. 洗盘: 缩量+小幅回调+趋势仍向上+价格未跌破MA20
     # V2.1 修正：增加价格未跌破MA20的条件，确保是洗盘而非趋势反转
