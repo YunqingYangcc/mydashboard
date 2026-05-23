@@ -285,49 +285,116 @@ def get_quotes_from_db(symbol: str, days: int = 120) -> pd.DataFrame:
 
 
 def batch_fetch_and_store(days: int = 120, sleep_interval: float = 1.0) -> dict:
-    """批量获取所有标的的历史行情并存入数据库
+    """批量获取所有标的的历史行情并存入数据库（智能增量模式）
 
     数据源:
     - A股/ETF: baostock (免费稳定)
     - 美股: Yahoo Finance Chart API (直接调用)
 
     Args:
-        days: 获取最近N天的数据
+        days: 获取最近N天的数据（首次导入或数据不足时使用）
         sleep_interval: 美股每次请求间隔(秒)
 
     Returns:
         dict: {symbol: rows_fetched}
     """
+    from kb.storage import get_knowledge_db
+    
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
-    start_str = start_date.strftime("%Y%m%d")
-    end_str = end_date.strftime("%Y%m%d")
-
+    
     results = {}
-
+    
     for target in TARGET_STOCKS:
         symbol = target["symbol"]
         market = target["market"]
         chain = target["chain"]
         name = target["name"]
-
+        
         logger.info(f"获取 {name}({symbol}) 行情...")
-
+        
+        # 查询数据库中该标的的最新日期和数据量
+        with get_knowledge_db() as conn:
+            latest_row = conn.execute(
+                "SELECT MAX(trade_date) as max_date, COUNT(*) as cnt FROM stock_daily_quotes WHERE symbol = ?",
+                (symbol,)
+            ).fetchone()
+        
+        latest_date_str = latest_row["max_date"] if latest_row else None
+        data_count = latest_row["cnt"] if latest_row else 0
+        
+        # 决策：是否需要全量拉取
+        need_full_fetch = False
+        
+        if not latest_date_str or data_count == 0:
+            # 情况1: 无数据，首次导入
+            fetch_start_date = start_date
+            need_full_fetch = True
+            logger.info(f"  {name}: 首次导入，全量拉取 {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}")
+        
+        elif data_count < days * 0.5:
+            # 情况2: 数据量不足一半，可能数据不完整，全量拉取
+            fetch_start_date = start_date
+            need_full_fetch = True
+            logger.info(f"  {name}: 数据不足({data_count}行 < {int(days*0.5)}行)，全量拉取")
+        
+        else:
+            # 情况3: 增量更新，只拉取最新日期之后的数据
+            latest_date = datetime.strptime(latest_date_str, "%Y-%m-%d")
+            
+            # 如果最新数据已经是今天或昨天，跳过
+            if latest_date >= end_date - timedelta(days=1):
+                logger.info(f"  {name}: 数据已是最新({latest_date_str})，跳过")
+                results[symbol] = 0
+                continue
+            
+            # 从最新日期的下一天开始拉取
+            fetch_start_date = latest_date + timedelta(days=1)
+            
+            # 检查是否有数据缺口（最新日期距离今天超过7天）
+            days_gap = (end_date - latest_date).days
+            if days_gap > 7:
+                logger.warning(f"  {name}: 数据缺口{days_gap}天，建议检查数据源")
+            
+            logger.info(f"  {name}: 增量更新 {fetch_start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}")
+        
+        # 执行数据获取
+        fetch_start_str = fetch_start_date.strftime("%Y%m%d")
+        fetch_end_str = end_date.strftime("%Y%m%d")
+        
         df = pd.DataFrame()
-        if market in ("A股", "ETF"):
-            df = _fetch_baostock(symbol, start_str, end_str, market=market)
-        elif market == "美股":
-            df = fetch_us_daily(symbol, start_str, end_str)
-            time.sleep(sleep_interval)
-
+        try:
+            if market in ("A股", "ETF"):
+                df = _fetch_baostock(symbol, fetch_start_str, fetch_end_str, market=market)
+            elif market == "美股":
+                df = fetch_us_daily(symbol, fetch_start_str, fetch_end_str)
+                time.sleep(sleep_interval)
+        except Exception as e:
+            logger.error(f"  {name}: 获取失败 - {e}")
+            results[symbol] = 0
+            continue
+        
         if not df.empty:
+            # 数据验证
+            validation = validate_data_quality(symbol, df)
+            
+            if not validation['passed']:
+                logger.error(f"  {name}: 数据验证失败 - {'; '.join(validation['errors'])}")
+                results[symbol] = 0
+                continue
+            
+            if validation['warnings']:
+                for warning in validation['warnings']:
+                    logger.warning(f"  {name}: {warning}")
+            
             count = store_quotes_to_db(df, symbol, market, chain)
             results[symbol] = count
-            logger.info(f"  {name}: 获取 {len(df)} 行，入库 {count} 行")
+            mode = "全量" if need_full_fetch else "增量"
+            logger.info(f"  {name}: {mode}获取 {len(df)} 行，入库 {count} 行")
         else:
             results[symbol] = 0
-            logger.warning(f"  {name}: 无数据")
-
+            logger.warning(f"  {name}: 无新数据")
+    
     return results
 
 
@@ -356,3 +423,145 @@ def fetch_single_latest(symbol: str, days: int = 5) -> int:
     if not df.empty:
         return store_quotes_to_db(df, symbol, market, chain)
     return 0
+
+
+def get_db_status() -> dict:
+    """获取数据库中各标的的数据状态
+    
+    Returns:
+        dict: {symbol: {latest_date, data_count, market, name}}
+    """
+    from kb.storage import get_knowledge_db
+    
+    status = {}
+    
+    with get_knowledge_db() as conn:
+        for target in TARGET_STOCKS:
+            symbol = target["symbol"]
+            row = conn.execute(
+                """
+                SELECT MAX(trade_date) as latest_date, COUNT(*) as data_count
+                FROM stock_daily_quotes
+                WHERE symbol = ?
+                """,
+                (symbol,)
+            ).fetchone()
+            
+            status[symbol] = {
+                "name": target["name"],
+                "market": target["market"],
+                "latest_date": row["latest_date"] if row else None,
+                "data_count": row["data_count"] if row else 0,
+            }
+    
+    return status
+
+
+def print_db_status():
+    """打印数据库状态摘要"""
+    status = get_db_status()
+    
+    print("\n📊 数据库状态:")
+    print("-" * 70)
+    print(f"{'标的':<12} {'名称':<15} {'市场':<6} {'最新日期':<12} {'数据量':<8}")
+    print("-" * 70)
+    
+    for symbol, info in sorted(status.items()):
+        latest = info["latest_date"] or "无数据"
+        count = info["data_count"]
+        status_icon = "✅" if count > 100 else "⚠️" if count > 0 else "❌"
+        
+        print(f"{status_icon} {symbol:<10} {info['name']:<15} {info['market']:<6} {latest:<12} {count:<8}")
+    
+    total_symbols = len(status)
+    has_data = sum(1 for s in status.values() if s["data_count"] > 0)
+    total_rows = sum(s["data_count"] for s in status.values())
+    
+    print("-" * 70)
+    print(f"总计: {has_data}/{total_symbols} 个标的数据 | 共 {total_rows} 行")
+    print()
+
+
+def validate_data_quality(symbol: str, df: pd.DataFrame) -> dict:
+    """验证数据质量，返回验证报告
+    
+    Args:
+        symbol: 标的代码
+        df: 行情数据 DataFrame
+    
+    Returns:
+        dict: 验证结果 {
+            'passed': bool,
+            'warnings': list,
+            'errors': list,
+            'metrics': dict
+        }
+    """
+    warnings = []
+    errors = []
+    
+    if df is None or df.empty:
+        return {
+            'passed': False,
+            'warnings': [],
+            'errors': ['数据为空'],
+            'metrics': {}
+        }
+    
+    # Level 2: 数据质量验证
+    
+    # 1. 数值范围检查
+    if (df['close'] <= 0).any():
+        errors.append('存在收盘价<=0的异常数据')
+    
+    if (df['volume'] < 0).any():
+        errors.append('存在成交量<0的异常数据')
+    
+    # 2. OHLC逻辑检查
+    if (df['high'] < df['low']).any():
+        errors.append('存在最高价<最低价的异常数据')
+    
+    if (df['high'] < df['close']).any():
+        warnings.append('部分日期最高价<收盘价（可能数据有误）')
+    
+    if (df['low'] > df['open']).any():
+        warnings.append('部分日期最低价>开盘价（可能数据有误）')
+    
+    # 3. 涨跌幅合理性检查（A股涨跌停10%，美股无限制但通常<20%）
+    if 'change_pct' in df.columns:
+        extreme_changes = df[df['change_pct'].abs() > 20]
+        if len(extreme_changes) > 0:
+            warnings.append(f"存在{len(extreme_changes)}天涨跌幅超过20%")
+    
+    # Level 3: 业务逻辑验证
+    
+    # 4. 数据量检查
+    if len(df) < 60:
+        warnings.append(f'数据量不足: {len(df)}行 < 60行')
+    
+    # 5. 日期连续性检查
+    if len(df) > 1:
+        df_sorted = df.sort_values('trade_date')
+        dates = pd.to_datetime(df_sorted['trade_date'])
+        date_diffs = dates.diff().dt.days
+        # 找出超过3天的缺口（周末+节假日最多3天）
+        gaps = date_diffs[date_diffs > 3]
+        if len(gaps) > 0:
+            warnings.append(f'存在{len(gaps)}个数据缺口（>3天）')
+    
+    # 计算质量指标
+    metrics = {
+        'total_rows': len(df),
+        'date_range': f"{df['trade_date'].min()} ~ {df['trade_date'].max()}" if len(df) > 0 else "N/A",
+        'avg_volume': float(df['volume'].mean()) if 'volume' in df.columns else 0,
+        'avg_close': float(df['close'].mean()) if 'close' in df.columns else 0,
+    }
+    
+    passed = len(errors) == 0
+    
+    return {
+        'passed': passed,
+        'warnings': warnings,
+        'errors': errors,
+        'metrics': metrics
+    }
