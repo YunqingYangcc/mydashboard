@@ -21,7 +21,7 @@ def main():
     # 2. 执行增量更新
     print("\n【步骤2】执行智能增量更新")
     print("-" * 70)
-    results = batch_fetch_and_store(days=120, sleep_interval=0.5)
+    results = batch_fetch_and_store(days=60, sleep_interval=0.5)
     
     # 3. 统计结果
     total_symbols = len(results)
@@ -43,7 +43,7 @@ def main():
     
     print("\n✅ 测试完成！")
     print("\n💡 提示:")
-    print("  - 如果是首次运行，会看到全量导入120天数据")
+    print("  - 首次运行会全量导入60天数据")
     print("  - 如果已有数据，会看到增量更新（通常只有1天）")
     print("  - 再次运行此脚本，应该看到大部分标的跳过（数据已是最新）")
 

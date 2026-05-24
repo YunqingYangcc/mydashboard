@@ -530,8 +530,8 @@ def render_volume_price_chart(df: pd.DataFrame, symbol: str) -> None:
     target = SYMBOL_MAP.get(symbol, {})
     name = target.get("name", symbol)
 
-    # 取最近60天
-    plot_df = df.tail(60).copy()
+    # 取最近15天
+    plot_df = df.tail(15).copy()
 
     if len(plot_df) == 0:
         st.info("无可用数据")

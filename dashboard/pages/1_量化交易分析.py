@@ -183,7 +183,7 @@ if selected_symbol:
 
     with col_chart:
         # 量价趋势图
-        df = get_quotes_from_db(selected_symbol, days=120)
+        df = get_quotes_from_db(selected_symbol, days=60)
         if df is not None and len(df) >= 10:
             render_volume_price_chart(df, selected_symbol)
         else:
@@ -279,9 +279,9 @@ with st.expander("⚙️ 数据管理", expanded=False):
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("📡 刷新所有标的行情(120天)", use_container_width=True, type="primary"):
+        if st.button("📡 刷新所有标的行情(15天)", use_container_width=True, type="primary"):
             with st.spinner("正在批量获取行情数据..."):
-                results = batch_fetch_and_store(days=120, sleep_interval=0.5)
+                results = batch_fetch_and_store(days=15, sleep_interval=0.5)
                 total = sum(results.values())
                 st.success(f"✅ 已获取 {len(results)} 只标的，共 {total} 条数据")
                 # 重新判定行情阶段
@@ -308,7 +308,7 @@ with st.expander("⚙️ 数据管理", expanded=False):
         with st.spinner(f"正在刷新 {refresh_sel}..."):
             fetch_count = fetch_single_latest(sym, days=10)
             # 重新判定
-            df = get_quotes_from_db(sym, days=120)
+            df = get_quotes_from_db(sym, days=60)
             if df is not None and len(df) >= 20:
                 result = determine_market_phase(df)
                 result["symbol"] = sym

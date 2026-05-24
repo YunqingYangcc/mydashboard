@@ -44,7 +44,7 @@ def _safe_series(s: pd.Series) -> np.ndarray:
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """计算量能分析所需的中间指标 (V2.0 修正版)
 
-    需要输入至少30天的OHLCV数据（原要求60天，已优化支持30天）
+    需要输入至少60天的OHLCV数据（用于计算MA20、MA60等指标）
     新增: vol_ratio (5日均量基准), vol_trend_ratio (5日/20日趋势比)
     """
     if df is None or len(df) < 5:
@@ -443,7 +443,7 @@ def determine_all_current() -> dict:
         symbol = target["symbol"]
         name = target["name"]
 
-        df = get_quotes_from_db(symbol, days=120)
+        df = get_quotes_from_db(symbol, days=60)
         if df is None or len(df) < 15:
             logger.warning(f"{name}({symbol}) 数据不足，跳过")
             results[symbol] = _default_result(f"{name}数据不足")

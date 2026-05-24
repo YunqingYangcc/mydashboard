@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""批量获取120天历史行情数据并入库"""
+"""批量获取历史行情数据并入库（增量更新）"""
 import sys
 import logging
 from pathlib import Path
@@ -18,10 +18,11 @@ def main():
     print("🔧 初始化数据库...")
     init_db()
 
-    print("📡 批量获取历史行情(120天)...")
-    print("  ⏳ 这可能需要较长时间，美股标的间隔5秒以避免限频...")
+    print("📡 批量获取历史行情...")
+    print("  ⏳ 智能增量更新：已有数据只拉最新，无数据拉60天")
+    print("  ⏳ 美股标的间隔5秒以避免限频...")
 
-    results = batch_fetch_and_store(days=120, sleep_interval=5.0)
+    results = batch_fetch_and_store(days=60, sleep_interval=5.0)
 
     print("\n📊 获取结果:")
     total_rows = 0
