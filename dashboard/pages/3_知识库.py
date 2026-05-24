@@ -173,17 +173,40 @@ with tab2:
         st.code(f"mkdir -p data/inbox/{today}\n# 然后在该目录下创建 .md 文件", language="bash")
     else:
         total_notes = sum(len(n) for n in notes_by_date.values())
-        st.caption(f"共 {len(notes_by_date)} 天，{total_notes} 篇笔记")
+        
+        c1, c2, c3 = st.columns([1, 1, 2])
+        with c1:
+            st.caption("📅 开始日期")
+            filter_start = st.date_input("开始", value=None, key="filter_start", label_visibility="collapsed")
+        with c2:
+            st.caption("📅 结束日期")
+            filter_end = st.date_input("结束", value=None, key="filter_end", label_visibility="collapsed")
+        with c3:
+            st.caption(f"共 {len(notes_by_date)} 天，{total_notes} 篇笔记")
+        
+        filtered_dates = {}
+        for date_str, notes in notes_by_date.items():
+            date_obj = parse_date_folder(date_str)
+            if filter_start and date_obj.date() < filter_start:
+                continue
+            if filter_end and date_obj.date() > filter_end:
+                continue
+            filtered_dates[date_str] = notes
         
         st.divider()
         
-        for date_str, notes in notes_by_date.items():
-            with st.expander(f"📆 {date_str} ({len(notes)}篇)", expanded=(date_str == list(notes_by_date.keys())[0])):
-                cols = st.columns(min(len(notes), 4))
-                for idx, note in enumerate(notes):
-                    with cols[idx % len(cols)]:
-                        if st.button(f"📄 {note['name']}", key=f"note_{note['path']}", use_container_width=True):
-                            st.session_state["reading_note"] = note["path"]
+        if not filtered_dates:
+            st.warning("没有符合条件的笔记")
+        else:
+            st.caption(f"筛选结果: {len(filtered_dates)} 天，{sum(len(n) for n in filtered_dates.values())} 篇笔记")
+            
+            for date_str, notes in filtered_dates.items():
+                with st.expander(f"📆 {date_str} ({len(notes)}篇)", expanded=(date_str == list(filtered_dates.keys())[0])):
+                    cols = st.columns(min(len(notes), 4))
+                    for idx, note in enumerate(notes):
+                        with cols[idx % len(cols)]:
+                            if st.button(f"📄 {note['name']}", key=f"note_{note['path']}", use_container_width=True):
+                                st.session_state["reading_note"] = note["path"]
         
         reading_path = st.session_state.get("reading_note")
         if reading_path:
