@@ -341,8 +341,77 @@ def _init_knowledge_db() -> None:
         UNIQUE(symbol, phase_date)
     );
 
+    CREATE TABLE IF NOT EXISTS trades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        trade_type TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        price REAL NOT NULL,
+        amount REAL NOT NULL,
+        fee REAL DEFAULT 0,
+        trade_date TEXT NOT NULL,
+        account TEXT,
+        notes TEXT,
+        tags_json TEXT DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS positions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL UNIQUE,
+        quantity REAL NOT NULL DEFAULT 0,
+        cost_price REAL NOT NULL DEFAULT 0,
+        current_price REAL,
+        market_value REAL,
+        profit_loss REAL,
+        profit_loss_pct REAL,
+        weight REAL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS portfolio_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        record_date TEXT NOT NULL UNIQUE,
+        total_value REAL NOT NULL,
+        cash REAL DEFAULT 0,
+        profit_loss REAL,
+        profit_loss_pct REAL,
+        positions_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS stock_financials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        report_date TEXT NOT NULL,
+        report_type TEXT NOT NULL,
+        pe REAL,
+        pb REAL,
+        ps REAL,
+        roe REAL,
+        roa REAL,
+        revenue REAL,
+        revenue_yoy REAL,
+        net_income REAL,
+        net_income_yoy REAL,
+        eps REAL,
+        dividend_yield REAL,
+        debt_ratio REAL,
+        current_ratio REAL,
+        gross_margin REAL,
+        net_margin REAL,
+        metadata_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        UNIQUE(symbol, report_date, report_type)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_quotes_symbol_date ON stock_daily_quotes(symbol, trade_date);
     CREATE INDEX IF NOT EXISTS idx_phases_symbol_date ON market_phases(symbol, phase_date);
+    CREATE INDEX IF NOT EXISTS idx_trades_symbol_date ON trades(symbol, trade_date);
+    CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol);
+    CREATE INDEX IF NOT EXISTS idx_portfolio_date ON portfolio_history(record_date);
+    CREATE INDEX IF NOT EXISTS idx_financials_symbol ON stock_financials(symbol);
     """
     with get_knowledge_db() as conn:
         conn.executescript(schema)
@@ -1681,8 +1750,219 @@ def check_claims_for_signal_change(signal_key: str, new_status: str) -> list:
     claims = get_claims_for_signal(signal_key)
     pending = []
     for claim in claims:
-        # 只对未验证或状态变化了的断言提醒
         if claim.get("verification_status") != "validated" or claim.get("last_status") != new_status:
             update_claim_signal_status(claim["id"], signal_key, new_status)
             pending.append(claim)
     return pending
+
+
+# ===== 交易记录管理 =====
+
+def insert_trade(payload: dict) -> int:
+    """插入交易记录"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        cursor = conn.execute("""
+            INSERT INTO trades(symbol, trade_type, quantity, price, amount, fee, trade_date, account, notes, tags_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            payload["symbol"], payload["trade_type"], payload["quantity"], payload["price"],
+            payload["amount"], payload.get("fee", 0), payload["trade_date"],
+            payload.get("account"), payload.get("notes"), 
+            payload.get("tags_json", "[]"), now, now
+        ))
+        return cursor.lastrowid
+
+
+def list_trades(symbol: str = None, limit: int = 100) -> list:
+    """查询交易记录"""
+    with get_knowledge_db() as conn:
+        if symbol:
+            rows = conn.execute(
+                "SELECT * FROM trades WHERE symbol = ? ORDER BY trade_date DESC, id DESC LIMIT ?",
+                (symbol, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM trades ORDER BY trade_date DESC, id DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+    return _decode_rows(rows, ["tags_json"])
+
+
+def delete_trade(trade_id: int) -> None:
+    """删除交易记录"""
+    with get_knowledge_db() as conn:
+        conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+
+
+def update_trade(trade_id: int, payload: dict) -> None:
+    """更新交易记录"""
+    now = now_iso()
+    fields = []
+    values = []
+    for k in ["symbol", "trade_type", "quantity", "price", "amount", "fee", "trade_date", "account", "notes", "tags_json"]:
+        if k in payload:
+            fields.append(f"{k} = ?")
+            values.append(payload[k])
+    if fields:
+        fields.append("updated_at = ?")
+        values.extend([now, trade_id])
+        with get_knowledge_db() as conn:
+            conn.execute(f"UPDATE trades SET {', '.join(fields)} WHERE id = ?", values)
+
+
+# ===== 持仓管理 =====
+
+def upsert_position(symbol: str, quantity: float, cost_price: float) -> None:
+    """更新或插入持仓"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        conn.execute("""
+            INSERT INTO positions(symbol, quantity, cost_price, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                quantity = excluded.quantity,
+                cost_price = excluded.cost_price,
+                updated_at = excluded.updated_at
+        """, (symbol, quantity, cost_price, now))
+
+
+def get_position(symbol: str) -> dict:
+    """获取单个持仓"""
+    with get_knowledge_db() as conn:
+        row = conn.execute("SELECT * FROM positions WHERE symbol = ?", (symbol,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_positions() -> list:
+    """获取所有持仓"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("SELECT * FROM positions ORDER BY market_value DESC").fetchall()
+    return _decode_rows(rows)
+
+
+def update_position_price(symbol: str, current_price: float) -> None:
+    """更新持仓当前价格和市值"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        pos = conn.execute("SELECT quantity, cost_price FROM positions WHERE symbol = ?", (symbol,)).fetchone()
+        if pos:
+            quantity = pos["quantity"]
+            cost_price = pos["cost_price"]
+            market_value = quantity * current_price
+            profit_loss = market_value - (quantity * cost_price)
+            profit_loss_pct = (profit_loss / (quantity * cost_price) * 100) if cost_price > 0 else 0
+            conn.execute("""
+                UPDATE positions SET current_price = ?, market_value = ?, profit_loss = ?, profit_loss_pct = ?, updated_at = ?
+                WHERE symbol = ?
+            """, (current_price, market_value, profit_loss, profit_loss_pct, now, symbol))
+
+
+def delete_position(symbol: str) -> None:
+    """删除持仓"""
+    with get_knowledge_db() as conn:
+        conn.execute("DELETE FROM positions WHERE symbol = ?", (symbol,))
+
+
+def calculate_position_weights() -> None:
+    """计算持仓权重"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute("SELECT symbol, market_value FROM positions WHERE market_value > 0").fetchall()
+        total = sum(r["market_value"] for r in rows) if rows else 0
+        if total > 0:
+            for r in rows:
+                weight = r["market_value"] / total * 100
+                conn.execute("UPDATE positions SET weight = ? WHERE symbol = ?", (weight, r["symbol"]))
+
+
+# ===== 收益曲线 =====
+
+def insert_portfolio_history(record_date: str, total_value: float, cash: float = 0, positions_json: dict = None) -> None:
+    """插入组合历史记录"""
+    now = now_iso()
+    import json
+    with get_knowledge_db() as conn:
+        prev = conn.execute(
+            "SELECT total_value FROM portfolio_history WHERE record_date < ? ORDER BY record_date DESC LIMIT 1",
+            (record_date,)
+        ).fetchone()
+        
+        profit_loss = None
+        profit_loss_pct = None
+        if prev and prev["total_value"] > 0:
+            profit_loss = total_value - prev["total_value"]
+            profit_loss_pct = profit_loss / prev["total_value"] * 100
+        
+        conn.execute("""
+            INSERT INTO portfolio_history(record_date, total_value, cash, profit_loss, profit_loss_pct, positions_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(record_date) DO UPDATE SET
+                total_value = excluded.total_value,
+                cash = excluded.cash,
+                profit_loss = excluded.profit_loss,
+                profit_loss_pct = excluded.profit_loss_pct,
+                positions_json = excluded.positions_json
+        """, (record_date, total_value, cash, profit_loss, profit_loss_pct, 
+              json.dumps(positions_json) if positions_json else "{}", now))
+
+
+def list_portfolio_history(days: int = 90) -> list:
+    """查询组合历史"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM portfolio_history ORDER BY record_date DESC LIMIT ?",
+            (days,)
+        ).fetchall()
+    return _decode_rows(rows, ["positions_json"])
+
+
+def get_latest_portfolio_value() -> dict:
+    """获取最新组合价值"""
+    with get_knowledge_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM portfolio_history ORDER BY record_date DESC LIMIT 1"
+        ).fetchone()
+    return dict(row) if row else None
+
+
+# ===== 财务数据 =====
+
+def upsert_financial(payload: dict) -> None:
+    """更新或插入财务数据"""
+    now = now_iso()
+    with get_knowledge_db() as conn:
+        fields = ["symbol", "report_date", "report_type", "pe", "pb", "ps", "roe", "roa",
+                  "revenue", "revenue_yoy", "net_income", "net_income_yoy", "eps",
+                  "dividend_yield", "debt_ratio", "current_ratio", "gross_margin", "net_margin", "metadata_json"]
+        values = [payload.get(k) for k in fields]
+        values.append(now)
+        
+        placeholders = ", ".join(["?"] * len(fields))
+        update_fields = ", ".join([f"{k} = excluded.{k}" for k in fields[3:]])
+        
+        conn.execute(f"""
+            INSERT INTO stock_financials({', '.join(fields)}, created_at)
+            VALUES ({placeholders}, ?)
+            ON CONFLICT(symbol, report_date, report_type) DO UPDATE SET {update_fields}
+        """, values)
+
+
+def get_financial(symbol: str) -> dict:
+    """获取最新财务数据"""
+    with get_knowledge_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM stock_financials WHERE symbol = ? ORDER BY report_date DESC LIMIT 1",
+            (symbol,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_financials(symbol: str, limit: int = 10) -> list:
+    """查询财务数据历史"""
+    with get_knowledge_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM stock_financials WHERE symbol = ? ORDER BY report_date DESC LIMIT ?",
+            (symbol, limit)
+        ).fetchall()
+    return _decode_rows(rows, ["metadata_json"])
