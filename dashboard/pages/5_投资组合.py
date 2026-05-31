@@ -13,7 +13,7 @@ from kb.storage import (
     upsert_position, get_position, list_positions, update_position_price,
     delete_position, calculate_position_weights,
     insert_portfolio_history, list_portfolio_history, get_latest_portfolio_value,
-    get_financial, list_financials
+    get_financial, list_financials, upsert_financial
 )
 from kb.market_constants import TARGET_STOCKS, SYMBOL_MAP
 from kb.data_fetcher import get_quotes_from_db
@@ -41,14 +41,12 @@ with tab1:
             else:
                 trade_symbol = st.text_input("标的代码", placeholder="如：AAPL、600519", key="trade_symbol_input")
         
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
         with c1:
-            trade_name = st.text_input("标的名称", placeholder="可选", key="trade_name")
-        with c2:
             trade_type = st.selectbox("类型", ["买入", "卖出"], key="trade_type")
-        with c3:
+        with c2:
             trade_quantity = st.number_input("数量", min_value=0.0, value=100.0, step=100.0, key="trade_quantity")
-        with c4:
+        with c3:
             trade_price = st.number_input("价格", min_value=0.0, value=100.0, step=0.1, key="trade_price")
         
         c5, c6, c7 = st.columns(3)
@@ -96,7 +94,7 @@ with tab1:
             trade_type_icon = "🟢" if t["trade_type"] == "买入" else "🔴"
             
             with st.container():
-                c1, c2, c3, c4, c5 = st.columns([2, 1.5, 1.5, 1.5, 0.5])
+                c1, c2, c3, c4, c5, c6 = st.columns([2, 1.2, 1.2, 1.2, 0.5, 0.5])
                 with c1:
                     st.markdown(f"**{trade_type_icon} {name}** ({symbol})")
                     st.caption(f"{t['trade_date']} | {t.get('account', '-')}")
@@ -107,6 +105,10 @@ with tab1:
                 with c4:
                     st.metric("金额", f"¥{t['amount']:,.2f}")
                 with c5:
+                    if st.button("✏️", key=f"edit_trade_{t['id']}"):
+                        st.session_state["editing_trade"] = dict(t)
+                        st.rerun()
+                with c6:
                     if st.button("🗑", key=f"del_trade_{t['id']}"):
                         delete_trade(t['id'])
                         st.rerun()
@@ -114,6 +116,59 @@ with tab1:
                 if t.get("notes"):
                     st.caption(f"📝 {t['notes']}")
                 st.divider()
+                
+        editing_trade = st.session_state.get("editing_trade")
+        if editing_trade:
+            st.divider()
+            st.subheader("✏️ 编辑交易")
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                edit_type = st.selectbox("类型", ["买入", "卖出"], 
+                    index=0 if editing_trade["trade_type"] == "买入" else 1, key="edit_trade_type")
+            with c2:
+                edit_quantity = st.number_input("数量", min_value=0.0, 
+                    value=float(editing_trade["quantity"]), step=100.0, key="edit_trade_quantity")
+            with c3:
+                edit_price = st.number_input("价格", min_value=0.0, 
+                    value=float(editing_trade["price"]), step=0.1, key="edit_trade_price")
+            with c4:
+                edit_amount = edit_quantity * edit_price
+                st.caption(f"金额: ¥{edit_amount:,.2f}")
+            
+            c5, c6, c7 = st.columns(3)
+            with c5:
+                edit_date = st.date_input("日期", 
+                    value=datetime.strptime(editing_trade["trade_date"], "%Y-%m-%d").date(), key="edit_trade_date")
+            with c6:
+                edit_fee = st.number_input("手续费", min_value=0.0, 
+                    value=float(editing_trade.get("fee", 0)), step=1.0, key="edit_trade_fee")
+            with c7:
+                edit_account = st.text_input("账户", 
+                    value=editing_trade.get("account", "") or "", key="edit_trade_account")
+            
+            edit_notes = st.text_area("备注", 
+                value=editing_trade.get("notes", "") or "", key="edit_trade_notes")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("保存修改", type="primary", use_container_width=True):
+                    update_trade(editing_trade["id"], {
+                        "trade_type": edit_type,
+                        "quantity": edit_quantity,
+                        "price": edit_price,
+                        "amount": edit_amount,
+                        "fee": edit_fee,
+                        "trade_date": str(edit_date),
+                        "account": edit_account or None,
+                        "notes": edit_notes or None
+                    })
+                    st.session_state.pop("editing_trade")
+                    st.success("✅ 已更新")
+                    st.rerun()
+            with c2:
+                if st.button("取消编辑", use_container_width=True):
+                    st.session_state.pop("editing_trade")
+                    st.rerun()
 
 with tab2:
     st.subheader("📊 持仓管理")
@@ -137,23 +192,33 @@ with tab2:
     st.divider()
     
     with st.expander("➕ 新增持仓", expanded=False):
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns([1, 1])
         with c1:
-            pos_symbol = st.selectbox(
-                "标的",
-                options=[t["symbol"] for t in TARGET_STOCKS],
-                format_func=lambda x: f"{SYMBOL_MAP.get(x, {}).get('name', x)} ({x})",
-                key="pos_symbol"
-            )
+            pos_input_mode = st.radio("输入方式", ["预设标的", "自定义标的"], horizontal=True, key="pos_input_mode")
         with c2:
+            if pos_input_mode == "预设标的":
+                pos_symbol = st.selectbox(
+                    "标的",
+                    options=[t["symbol"] for t in TARGET_STOCKS],
+                    format_func=lambda x: f"{SYMBOL_MAP.get(x, {}).get('name', x)} ({x})",
+                    key="pos_symbol_select"
+                )
+            else:
+                pos_symbol = st.text_input("标的代码", placeholder="如：AAPL、600519", key="pos_symbol_input")
+        
+        c1, c2 = st.columns(2)
+        with c1:
             pos_quantity = st.number_input("持仓数量", min_value=0.0, value=100.0, step=100.0, key="pos_quantity")
-        with c3:
+        with c2:
             pos_cost = st.number_input("成本价", min_value=0.0, value=100.0, step=0.1, key="pos_cost")
         
         if st.button("保存持仓", type="primary", use_container_width=True):
-            upsert_position(pos_symbol, pos_quantity, pos_cost)
-            st.success("✅ 持仓已保存")
-            st.rerun()
+            if not pos_symbol:
+                st.error("请输入标的代码")
+            else:
+                upsert_position(pos_symbol, pos_quantity, pos_cost)
+                st.success("✅ 持仓已保存")
+                st.rerun()
     
     if not positions:
         st.info("暂无持仓")

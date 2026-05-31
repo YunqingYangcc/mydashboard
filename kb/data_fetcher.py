@@ -232,128 +232,9 @@ def fetch_us_daily_batch_akshare(symbols: list, days: int = 120) -> dict:
 
 
 # ============================================================================
-# 以下函数已弃用 - 不稳定的数据源（保留供参考）
-# ============================================================================
-
-# def fetch_us_daily(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
-#     """获取美股日线行情数据 (Yahoo Finance Chart API - query2)
-# 
-#     ⚠️ 已弃用：频繁403限频，不稳定
-#     """
-#     # ... 原有代码 ...
-#
-#
-# def _fetch_yfinance_backup(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
-#     """yfinance 备用数据源
-# 
-#     ⚠️ 已弃用：也会被限频
-#     """
-#     # ... 原有代码 ...
-#
-#
-# def fetch_fmp(symbol: str, api_key: str = None, days: int = 100) -> pd.DataFrame:
-#     """使用 FMP API 获取美股历史数据
-# 
-#     ⚠️ 已弃用：当前返回403错误
-#     """
-#     # ... 原有代码 ...
-#
-#
-# def fetch_us_daily_batch_akshare(symbols: list, days: int = 120) -> dict:
-#     """使用 AKShare 批量获取美股历史数据
-# 
-#     ⚠️ 已弃用：网络连接不稳定
-#     """
-#     # ... 原有代码 ...
-
-# ============================================================================
 # 稳定数据源
 # ============================================================================
 
-
-def fetch_alpha_vantage(symbol: str, api_key: str = None) -> pd.DataFrame:
-    """使用 Alpha Vantage API 获取美股历史数据
-    
-    Args:
-        symbol: 美股Ticker (如 NVDA)
-        api_key: Alpha Vantage API Key，默认从环境变量读取
-    
-    Returns:
-        DataFrame with OHLCV data
-    """
-    import os
-    
-    if not api_key:
-        api_key = os.getenv('ALPHAVANTAGE_API_KEY', '')
-    
-    if not api_key:
-        logger.warning("Alpha Vantage API Key 未配置，跳过")
-        return pd.DataFrame()
-    
-    try:
-        url = "https://www.alphavantage.co/query"
-        params = {
-            "function": "TIME_SERIES_DAILY",
-            "symbol": symbol,
-            "apikey": api_key,
-            "outputsize": "compact"  # 最近100天数据
-        }
-        
-        resp = requests.get(url, params=params, timeout=15)
-        
-        if resp.status_code != 200:
-            logger.error(f"Alpha Vantage {symbol} HTTP {resp.status_code}")
-            logger.error(f"响应内容: {resp.text[:200]}")
-            return pd.DataFrame()
-        
-        data = resp.json()
-        
-        # 检查是否有错误信息
-        if "Error Message" in data:
-            logger.error(f"Alpha Vantage {symbol}: {data['Error Message']}")
-            return pd.DataFrame()
-        
-        if "Note" in data:
-            logger.warning(f"Alpha Vantage {symbol}: {data['Note']}")
-            return pd.DataFrame()
-        
-        # 打印完整响应用于调试（仅前500字符）
-        logger.debug(f"Alpha Vantage {symbol} 响应: {str(data)[:500]}")
-        
-        # 解析时间序列数据
-        time_series = data.get('Time Series (Daily)', {})
-        
-        if not time_series:
-            logger.warning(f"Alpha Vantage {symbol}: 无数据返回")
-            return pd.DataFrame()
-        
-        # 转换为DataFrame
-        records = []
-        for date_str, values in time_series.items():
-            records.append({
-                'trade_date': date_str,
-                'open': float(values['1. open']),
-                'high': float(values['2. high']),
-                'low': float(values['3. low']),
-                'close': float(values['4. close']),
-                'volume': int(values['5. volume'])
-            })
-        
-        df = pd.DataFrame(records)
-        df = df.sort_values('trade_date').reset_index(drop=True)
-        
-        # 计算衍生指标
-        df['change_pct'] = df['close'].pct_change() * 100
-        df['turnover'] = df['volume'] * df['close']
-        
-        return df
-    
-    except Exception as e:
-        logger.error(f"Alpha Vantage {symbol} 异常: {e}")
-        return pd.DataFrame()
-
-
-# ===== 存储 =====
 
 def _fetch_yfinance_backup(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
     """yfinance 备用数据源（当 Yahoo API 彻底失效时启用）"""
@@ -410,7 +291,7 @@ def fetch_alpha_vantage(symbol: str, api_key: str = None) -> pd.DataFrame:
             "function": "TIME_SERIES_DAILY",
             "symbol": symbol,
             "apikey": api_key,
-            "outputsize": "compact"  # 最近100天数据
+            "outputsize": "compact"
         }
         
         resp = requests.get(url, params=params, timeout=15)
@@ -421,7 +302,6 @@ def fetch_alpha_vantage(symbol: str, api_key: str = None) -> pd.DataFrame:
         
         data = resp.json()
         
-        # 检查是否有错误信息
         if "Error Message" in data:
             logger.error(f"Alpha Vantage {symbol} 错误: {data['Error Message']}")
             return pd.DataFrame()
@@ -430,7 +310,6 @@ def fetch_alpha_vantage(symbol: str, api_key: str = None) -> pd.DataFrame:
             logger.warning(f"Alpha Vantage {symbol} 限频: {data['Note']}")
             return pd.DataFrame()
         
-        # 解析数据
         time_series = data.get('Time Series (Daily)', {})
         if not time_series:
             logger.warning(f"Alpha Vantage {symbol} 无数据")
@@ -449,8 +328,6 @@ def fetch_alpha_vantage(symbol: str, api_key: str = None) -> pd.DataFrame:
         
         df = pd.DataFrame(records)
         df = df.sort_values('trade_date').reset_index(drop=True)
-        
-        # 计算衍生指标
         df['turnover'] = df['close'] * df['volume']
         df['change_pct'] = df['close'].pct_change() * 100
         

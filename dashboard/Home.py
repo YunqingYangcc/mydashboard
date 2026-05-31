@@ -51,7 +51,7 @@ st.divider()
 
 # 快速入口
 st.subheader("快速入口")
-entry_col1, entry_col2, entry_col3, entry_col4 = st.columns(4)
+entry_col1, entry_col2, entry_col3, entry_col4, entry_col5 = st.columns(5)
 with entry_col1:
     st.page_link("pages/1_量化交易分析.py", label="🚦 行情仪表盘", icon="🚦")
 with entry_col2:
@@ -60,6 +60,8 @@ with entry_col3:
     st.page_link("pages/3_知识库.py", label="📝 知识库", icon="📝")
 with entry_col4:
     st.page_link("pages/4_学习笔记.py", label="🧠 知识点", icon="🧠")
+with entry_col5:
+    st.page_link("pages/5_投资组合.py", label="💰 投资组合", icon="💰")
 
 # 签名
 with st.sidebar:
