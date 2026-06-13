@@ -1,4 +1,4 @@
-WATERMARK_TEXT = "杨云清"
+WATERMARK_TEXT = "@杨布拉德"
 
 RENDER_MODE_TEXT = "text"
 RENDER_MODE_MARKDOWN = "markdown"

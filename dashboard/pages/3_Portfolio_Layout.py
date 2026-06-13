@@ -322,7 +322,7 @@ KNOWLEDGE_TREE = {
 # ===== 侧边栏 =====
 with st.sidebar:
     st.divider()
-    st.subheader("📚 学习路径建议")
+    st.subheader("📚 Learning Path Suggestions")
     st.markdown("""
 **第一阶段：P0基础设施层（2-3周）**
 优先学：AI芯片→HBM→云CapEx→CUDA生态
@@ -344,7 +344,7 @@ with st.sidebar:
     render_signature()
 
 # ===== 页面 =====
-st.title("🌳 AI产业链知识图谱")
+st.title("🌳 AI Industry Chain Knowledge Graph")
 st.caption("勾选已掌握的知识点 → 量化学习进度")
 
 # 加载已学数据
@@ -771,7 +771,7 @@ for section, categories in KNOWLEDGE_TREE.items():
 
 # ===== AI产业链6条核心链路 =====
 st.divider()
-st.subheader("📊 关键链路解读")
+st.subheader("📊 Key Chain Insights")
 
 # 链路1
 with st.expander("🔴 链路1：英伟达价值捕获链（最强护城河）"):

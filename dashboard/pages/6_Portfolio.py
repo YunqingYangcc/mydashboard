@@ -24,7 +24,7 @@ init_page_style()
 tab1, tab2, tab3, tab4 = st.tabs(["📝 交易记录", "📊 持仓管理", "📈 收益曲线", "💰 财务数据"])
 
 with tab1:
-    st.subheader("📝 交易记录")
+    st.subheader("📝 Trade History")
     
     with st.expander("➕ 新增交易", expanded=False):
         c1, c2 = st.columns([1, 1])
@@ -120,7 +120,7 @@ with tab1:
         editing_trade = st.session_state.get("editing_trade")
         if editing_trade:
             st.divider()
-            st.subheader("✏️ 编辑交易")
+            st.subheader("✏️ Edit Trade")
             c1, c2, c3, c4 = st.columns(4)
             with c1:
                 edit_type = st.selectbox("类型", ["买入", "卖出"], 
@@ -171,7 +171,7 @@ with tab1:
                     st.rerun()
 
 with tab2:
-    st.subheader("📊 持仓管理")
+    st.subheader("📊 Position Management")
     
     positions = list_positions()
     
@@ -260,7 +260,7 @@ with tab2:
             st.rerun()
 
 with tab3:
-    st.subheader("📈 收益曲线")
+    st.subheader("📈 Performance Chart")
     
     positions = list_positions()
     auto_total = float(sum(p.get("market_value", 0) or 0 for p in positions) if positions else 0)
@@ -354,7 +354,7 @@ with tab3:
                         st.caption(f"{pl_pct:.2f}%")
 
 with tab4:
-    st.subheader("💰 财务数据")
+    st.subheader("💰 Financial Data")
     
     c1, c2 = st.columns([1, 1])
     with c1:

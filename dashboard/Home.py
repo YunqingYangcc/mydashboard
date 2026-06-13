@@ -18,7 +18,7 @@ from kb.storage import (
 init_db()
 init_page_style()
 
-st.title("🚀 知识库助手")
+st.title("🚀 @杨布拉德 Investment Dashboard")
 
 # 励志标语
 SLOGANS = [
@@ -36,7 +36,7 @@ claims = list_claims()
 markdown_docs = [d for d in docs if (d.get("metadata_json") or {}).get("render_mode") == "markdown"]
 starred_docs = [d for d in docs if (d.get("metadata_json") or {}).get("starred", False)]
 
-st.subheader("📊 知识库统计")
+st.subheader("📊 Statistics")
 stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
 with stat_col1:
     metric_card("文档", len(docs), "总数量")
@@ -50,18 +50,20 @@ with stat_col4:
 st.divider()
 
 # 快速入口
-st.subheader("快速入口")
-entry_col1, entry_col2, entry_col3, entry_col4, entry_col5 = st.columns(5)
+st.subheader("Quick Access")
+entry_col1, entry_col2, entry_col3, entry_col4, entry_col5, entry_col6 = st.columns(6)
 with entry_col1:
-    st.page_link("pages/1_量化交易分析.py", label="🚦 行情仪表盘", icon="🚦")
+    st.page_link("pages/1_Investment_Thinking.py", label="🧠 Investment", icon="🧠")
 with entry_col2:
-    st.page_link("pages/2_布局.py", label="📊 学习布局", icon="📊")
+    st.page_link("pages/2_Quant_Trading.py", label="🚦 Quant Trading", icon="🚦")
 with entry_col3:
-    st.page_link("pages/3_知识库.py", label="📝 知识库", icon="📝")
+    st.page_link("pages/3_Portfolio_Layout.py", label="📊 Layout", icon="📊")
 with entry_col4:
-    st.page_link("pages/4_学习笔记.py", label="🧠 知识点", icon="🧠")
+    st.page_link("pages/4_Knowledge_Base.py", label="📝 Knowledge", icon="📝")
 with entry_col5:
-    st.page_link("pages/5_投资组合.py", label="💰 投资组合", icon="💰")
+    st.page_link("pages/5_Learning_Notes.py", label="📖 Notes", icon="📖")
+with entry_col6:
+    st.page_link("pages/6_Portfolio.py", label="💰 Portfolio", icon="💰")
 
 # 签名
 with st.sidebar:

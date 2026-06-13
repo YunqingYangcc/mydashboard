@@ -120,7 +120,7 @@ with tab1:
 
     sel = st.session_state.get("sel_doc")
     if not sel:
-        st.title("📝 知识库")
+        st.title("📝 Knowledge Base")
         st.info("← 从左侧选文章")
     else:
         m = sel.get("metadata_json") or {}
@@ -162,7 +162,7 @@ with tab1:
                     render_notes_list(cl)
 
 with tab2:
-    st.title("📅 每日学习笔记")
+    st.title("📅 Daily Learning Notes")
     st.caption(f"笔记目录: data/inbox/")
     
     notes_by_date = get_daily_notes()

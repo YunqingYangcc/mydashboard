@@ -12,7 +12,7 @@ from kb.storage import init_db, list_claims, insert_claim, update_claim, delete_
 init_db()
 init_page_style()
 
-st.title("🧠 知识点")
+st.title("🧠 Knowledge Points")
 
 # ===== 置顶大输入框，Ctrl+Enter 即存 =====
 with st.form("inp", clear_on_submit=True):

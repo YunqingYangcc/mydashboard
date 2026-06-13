@@ -57,7 +57,7 @@ from kb.utils import now_iso
 init_db()
 init_page_style()
 
-st.title("🚦 AI产业链行情阶段仪表盘")
+st.title("🚦 AI Industry Chain Dashboard")
 st.caption("量在价先 · 8种可枚举行情阶段 · 20只标的全覆盖")
 
 # ========== 加载行情阶段数据 ==========
@@ -82,7 +82,7 @@ history_phases = load_history_phases()
 chain_summary = compute_chain_phase_summary(phases)
 
 # ========== 区块1: 行情总览栏 ==========
-st.subheader("📊 行情总览")
+st.subheader("📊 Market Overview")
 
 # 统计各阶段数量
 phase_counts = {}
@@ -146,20 +146,20 @@ for idx, chain in enumerate(CHAIN_FLOW):
 
 # ========== 区块2: 产业链行情地图 ==========
 st.divider()
-st.subheader("🗺️ 产业链行情地图")
+st.subheader("🗺️ Industry Chain Map")
 
 render_chain_map(phases)
 
 # ========== 区块3: 行情阶段时序矩阵 ==========
 st.divider()
-st.subheader("📋 行情阶段时序矩阵")
+st.subheader("📋 Phase Timeline Matrix")
 st.caption("行=标的，列=最近5个交易日，观察行情阶段变化与产业链传导")
 
 render_phase_time_matrix(phases, history_phases)
 
 # ========== 区块4: 标的详情(交互) ==========
 st.divider()
-st.subheader("🔍 标的详情")
+st.subheader("🔍 Stock Details")
 
 # 选择标的
 all_options = {}
@@ -191,7 +191,7 @@ if selected_symbol:
 
 # ========== 区块5: 产业景气信号(原有) ==========
 st.divider()
-st.subheader("📈 产业景气信号")
+st.subheader("📈 Industry Signals")
 st.caption("CapEx/TSMC营收等产业景气指标，作为行情判定的辅助参考")
 
 signal_defs = list_signal_definitions()

@@ -1,4 +1,4 @@
-"""UI组件库 - Notion暗色主题 + 行情阶段可视化
+"""UI组件库 - 浅色主题 + 行情阶段可视化
 
 📋 Prompt绑定: prompts/展示绘图.md
 修改本文件前必须先阅读该 prompt，确保改动符合区块布局、配色规范和组件接口定义。
@@ -26,7 +26,7 @@ def init_page_style(watermark_text: str = WATERMARK_TEXT) -> None:
     统一的页面样式初始化，必须在每个页面的开头调用。
     """
     st.set_page_config(
-        page_title="杨云清的个人知识库",
+        page_title="@杨布拉德的投资知识库",
         page_icon="⚡",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -34,21 +34,21 @@ def init_page_style(watermark_text: str = WATERMARK_TEXT) -> None:
     st.markdown(
         """
         <style>
-        /* ===== Notion风格 全局 ===== */
+        /* ===== 浅色主题 全局 ===== */
         .block-container { padding-top: 4rem; padding-bottom: 2rem; max-width: 96rem; }
-        .stApp { background: #1a1a1a; }
+        .stApp { background: #ffffff; }
 
         /* ===== 卡片 ===== */
         .yyq-card {
-            border: 1px solid rgba(255,255,255,0.06);
+            border: 1px solid #e0e0e0;
             border-radius: 6px;
             padding: 16px 20px;
-            background: #242424;
+            background: #f8f9fa;
         }
-        .yyq-card:hover { background: #2a2a2a; }
+        .yyq-card:hover { background: #f0f1f3; }
         .yyq-card-title {
             font-size: 2rem;
-            color: #8c8c8c;
+            color: #666666;
             margin-bottom: 8px;
             font-weight: 500;
         }
@@ -57,70 +57,75 @@ def init_page_style(watermark_text: str = WATERMARK_TEXT) -> None:
             font-weight: 700;
             line-height: 1.15;
             margin-bottom: 6px;
-            color: #dfdfdf;
+            color: #333333;
         }
-        .yyq-card-desc { font-size: 2rem; color: #8c8c8c; }
+        .yyq-card-desc { font-size: 2rem; color: #666666; }
 
         /* ===== 标签 ===== */
         .yyq-chip {
             display: inline-block; padding: 3px 8px; border-radius: 4px;
             font-size: 0.78rem; margin-right: 6px; margin-bottom: 6px;
-            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
-            color: #bfbfbf;
+            background: #e8f4fd; border: 1px solid #b3d9f2;
+            color: #1a73e8;
         }
 
         /* ===== 面板 ===== */
         .yyq-panel {
-            border: 1px solid rgba(255,255,255,0.06);
+            border: 1px solid #e0e0e0;
             border-radius: 6px; padding: 14px 16px; margin-bottom: 10px;
-            background: #242424;
+            background: #f8f9fa;
         }
-        .yyq-panel:hover { background: #2a2a2a; }
+        .yyq-panel:hover { background: #f0f1f3; }
 
         /* ===== 签名 ===== */
         .yyq-signature {
-            background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.05);
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
             border-radius: 6px; padding: 14px 16px; margin-top: 20px; text-align: center;
         }
         .yyq-signature-name {
-            font-size: 0.85rem; font-weight: 600; color: #bfbfbf;
+            font-size: 0.85rem; font-weight: 600; color: #333333;
             letter-spacing: 0.08em; margin-bottom: 4px;
         }
         .yyq-signature-desc {
-            font-size: 0.68rem; color: rgba(191,191,191,0.4); letter-spacing: 0.05em;
+            font-size: 0.68rem; color: #888888; letter-spacing: 0.05em;
         }
 
         /* ===== Streamlit 原生元素 ===== */
-        h1 { font-weight: 600 !important; color: #e6e6e6 !important; }
-        h2 { font-weight: 600 !important; color: #dfdfdf !important; }
-        h3 { font-weight: 500 !important; color: #bfbfbf !important; font-size: 1rem !important; }
-        hr { border-color: rgba(255,255,255,0.06) !important; margin: 1rem 0 !important; }
-        [data-testid="stMetricValue"] { color: #dfdfdf !important; font-weight: 600 !important; }
-        [data-testid="stMetricLabel"] { color: #8c8c8c !important; }
+        h1 { font-weight: 600 !important; color: #333333 !important; }
+        h2 { font-weight: 600 !important; color: #444444 !important; }
+        h3 { font-weight: 500 !important; color: #555555 !important; font-size: 1rem !important; }
+        hr { border-color: #e0e0e0 !important; margin: 1rem 0 !important; }
+        [data-testid="stMetricValue"] { color: #333333 !important; font-weight: 600 !important; }
+        [data-testid="stMetricLabel"] { color: #666666 !important; }
 
         /* 侧边栏 */
         [data-testid="stSidebar"] {
-            background: #1d1d1d !important;
-            border-right: 1px solid rgba(255,255,255,0.05) !important;
+            background: #f8f9fa !important;
+            border-right: 1px solid #e0e0e0 !important;
+        }
+        [data-testid="stSidebar"] .stMarkdown p,
+        [data-testid="stSidebar"] .stMarkdown li,
+        [data-testid="stSidebar"] .stMarkdown a {
+            color: #333333 !important;
         }
 
         /* 输入框 */
         input, textarea {
             border-radius: 6px !important;
-            border: 1px solid rgba(255,255,255,0.10) !important;
+            border: 1px solid #d0d0d0 !important;
             font-size: 0.9rem !important;
             padding: 10px 12px !important;
-            background: #242424 !important;
-            color: #e6e6e6 !important;
+            background: #ffffff !important;
+            color: #333333 !important;
         }
         input:focus, textarea:focus {
-            border-color: rgba(100,130,150,0.5) !important;
-            box-shadow: none !important;
+            border-color: #1a73e8 !important;
+            box-shadow: 0 0 0 2px rgba(26,115,232,0.2) !important;
         }
         input[type="text"] { min-height: 40px !important; }
         textarea { min-height: 120px !important; line-height: 1.6 !important; }
-        ::placeholder { color: #5a5a5a !important; }
+        ::placeholder { color: #999999 !important; }
 
         /* 按钮 */
         .stButton > button {
@@ -144,8 +149,7 @@ def render_signature() -> None:
     st.markdown(
         """
         <div class="yyq-signature">
-            <div class="yyq-signature-name">杨云清</div>
-            <div class="yyq-signature-desc">认知升级 · 投资精进</div>
+            <div class="yyq-signature-name">@杨布拉德</div>
         </div>
         """,
         unsafe_allow_html=True,
