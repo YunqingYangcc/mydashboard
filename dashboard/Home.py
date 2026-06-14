@@ -51,7 +51,7 @@ st.divider()
 
 # 快速入口
 st.subheader("Quick Access")
-entry_col1, entry_col2, entry_col3, entry_col4, entry_col5, entry_col6 = st.columns(6)
+entry_col1, entry_col2, entry_col3, entry_col4, entry_col5 = st.columns(5)
 with entry_col1:
     st.page_link("pages/1_Investment_Thinking.py", label="🧠 Investment", icon="🧠")
 with entry_col2:
@@ -62,8 +62,6 @@ with entry_col4:
     st.page_link("pages/4_Knowledge_Base.py", label="📝 Knowledge", icon="📝")
 with entry_col5:
     st.page_link("pages/5_Learning_Notes.py", label="📖 Notes", icon="📖")
-with entry_col6:
-    st.page_link("pages/6_Portfolio.py", label="💰 Portfolio", icon="💰")
 
 # 签名
 with st.sidebar:
