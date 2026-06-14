@@ -1,7 +1,7 @@
 """🧠 零散记忆章节 - 时间线+章节分组"""
 import sys
 from pathlib import Path
-from datetime import datetime
+
 import streamlit as st
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -34,8 +34,7 @@ with st.expander("✍️ 记一条碎片记忆", expanded=False):
     with st.form("quick_memo", clear_on_submit=True):
         c1, c2 = st.columns([8, 1.2])
         with c1:
-            txt = st.text_area("", placeholder="「NVDA 推理卡提前半年...」「AI 应用最大卡点是大模型幻觉...」「美光 HBM 定价权正在向 supplier 转移...」",
-                               label_visibility="collapsed", height=80)
+            txt = st.text_area("记忆碎片", placeholder="「NVDA 推理卡提前半年...」「AI 应用最大卡点是大模型幻觉...」「美光 HBM 定价权正在向 supplier 转移...」", label_visibility="collapsed", height=80)
         with c2:
             ch = st.selectbox("章", chapter_list if chapter_list else ["未分类"],
                             index=0 if "未分类" not in chapter_list else chapter_list.index("未分类"),
